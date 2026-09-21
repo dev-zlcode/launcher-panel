@@ -1,0 +1,7 @@
+node_modules
+dist
+
+# All user data: items.json holds his entries and paths, icons/ and runs/ are derived caches.
+data/
+.DS_Store
+*.log

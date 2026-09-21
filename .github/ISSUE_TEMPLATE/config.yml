@@ -1,0 +1,10 @@
+# 空白 issue 关掉：这两类模板要的信息（哪个界面 / 哪份清单 / 请求与 error 原文）
+# 少了就没法判断是校验拦下、解析掉层，还是前端回落。请按模板提。
+blank_issues_enabled: false
+contact_links:
+  - name: 报告安全问题
+    url: https://github.com/dev-zlcode/launcher-panel/security/policy
+    about: 先看 SECURITY.md —— 标题写「安全问题」、正文不要写细节，我会转成私密 advisory
+  - name: 接口与字段口径
+    url: https://github.com/dev-zlcode/launcher-panel/blob/main/docs/AI-GUIDE.md
+    about: 六类条目的字段与上限、/api/* 的请求形状和错误文案都在这份里，提问前先对一遍

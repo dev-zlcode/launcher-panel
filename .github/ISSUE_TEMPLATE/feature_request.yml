@@ -1,0 +1,81 @@
+name: 提功能或改动
+description: 新能力、交互改动、文案调整
+title: "[feat] "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        这个项目最贵的是"一致"，不是"多"。所以先看一眼 `CONTRIBUTING.md` 的**硬约束**：
+        不新增接口面、配置只进 `items.json`、一份清单只出现一次、措辞口径定死。
+        大部分被拒的请求不是想法不好，是要多加一处存储。
+
+  - type: dropdown
+    id: surface
+    attributes:
+      label: 改哪一处
+      description: 具体到界面和清单；"打开方式那块"这种范围我没法评估
+      options:
+        - 面板 /（卡片、搜索、侧栏筛选、⌘K）
+        - 设置弹窗 ⌘,
+        - 打开方式 / 终端菜单（同一份 candidateApps 喂的那五处）
+        - 发现导入
+        - 应用管理 /manage.html
+        - 条目类型或字段本身
+        - 服务端 /api/*
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: 你想解决什么
+      description: 从你实际遇到的场景说起，别从功能名说起
+      placeholder: |
+        我有一批 folder 条目想用同一个编辑器打开，但每次都得进菜单挑。
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 你建议怎么做
+      description: 说清它落在哪份现有清单/哪个现有接口上；说不清就是还没想完
+    validations:
+      required: true
+
+  - type: dropdown
+    id: cost
+    attributes:
+      label: 需要新的存储位置或接口吗
+      description: 诚实回答。这一项通常直接决定会不会被接受
+      options:
+        - 不需要——复用现有字段 / items.json 现有键
+        - 需要往 items.json 加一个键（请在上面说明是哪个字段的自然延伸）
+        - 需要新接口 / 新文件（请在「代价」里说明为什么现有形状装不下）
+        - 不确定
+    validations:
+      required: true
+
+  - type: textarea
+    id: cost-detail
+    attributes:
+      label: 代价（可选）
+      description: 选了"需要新接口/新文件"就必填——不加会怎样、加了以后哪两处会互相过期
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: 备选（可选）
+      description: 你考虑过但放弃的做法，以及为什么放弃
+
+  - type: checkboxes
+    id: confirm
+    attributes:
+      label: 确认
+      options:
+        - label: 我读过 CONTRIBUTING 的硬约束和 docs/AI-GUIDE.md 的字段/接口口径
+          required: true
+        - label: 这个改动不会让同一份清单在两处以不同规则解析
+          required: true

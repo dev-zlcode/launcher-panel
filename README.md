@@ -1,0 +1,225 @@
+# launcher-panel
+
+自己用的 macOS 启动面板：把常用的应用、文件夹、链接、命令和文本片段收在一页里，一次点击打开。
+它是一个**跑在本机的 Web 面板**（不是托管站点、也不是浏览器插件）——因为要读 `.app` 图标、要 `open`、要 spawn 命令，这些只能由本机进程做；而浏览器只是最省事的渲染层。
+
+没有数据库、没有外部服务：**全部配置落在 `data/items.json` 一个文件里，换机器直接拷贝该文件即可**。`data/` 整个目录 git-ignore（里面是个人路径和条目）。
+
+## 长这样
+
+**宫格（默认档）**：侧栏是筛选轴（智能 / 类型 / 分组 / 标签），头部三个下拉是视图三轴，卡片右上角是类型徽标 + 使用次数。
+
+![面板 · 分组按分组、排序默认顺序、视图宫格](docs/images/panel-grid.png)
+
+**按类型分组 + 按名称排序**：拆轴后才有的组合——以前选了「按类型」就没得选排序。六个类型桶各自按名称排（「置顶」桶也一样），视图仍是宫格。
+
+![面板 · 分组按类型、排序名称、视图宫格](docs/images/panel-by-kind.png)
+
+> 截图里是**演示数据**（假条目 + 系统自带 App），不是你机器上的真实内容——真实数据全在 `data/items.json`，整个 `data/` 目录 git-ignore。
+
+## 快速开始
+
+```bash
+npm install
+npm run dev      # http://127.0.0.1:5178
+```
+
+需要 Node ≥ 20.19（Vite 7 的下限），只能在 macOS 跑：打开走 `open`，`.app` 图标由 `osascript -l JavaScript`（NSWorkspace）导出再 `sips` 缩放，原生路径选择器是 `osascript`，剪贴板是 `pbcopy`，bundle id 读 `plutil`。
+
+端口固定 5178（`strictPort`），只绑 `127.0.0.1`，不对外网开放。
+
+```bash
+npm run typecheck   # tsc --noEmit
+npm run build       # typecheck + vite build → dist/
+npm start           # build 后用 server/prod.mjs 起静态服务（同样的 /api/*，无 Vite）
+PORT=5180 npm start # prod 服务端口可用 PORT 覆盖
+```
+
+## 两个页面
+
+| 地址 | 作用 |
+| --- | --- |
+| `/` | 启动面板：条目卡片、搜索、侧栏筛选、设置、发现导入 |
+| `/manage.html` | 应用管理：管 App 本身（分组、重命名、拖拽排序），不管条目 |
+
+## 日常用法
+
+**攒条目**：`N` 或顶部「新增」→ 选类型 → 填值（`folder` / `file` 有「浏览…」走系统原生选择器，不用手敲路径；名称留空会从值里推断）→ 分组（自由文本，datalist 里是已有分组）、标签（逗号分隔）、备注、「固定到置顶区」。⌘↵ 保存。
+
+**批量导入**：顶部「发现应用」→ 递归扫 `discoverDirs` 下所有 `.app`（默认 `/Applications`、`~/Applications`、`/System/Applications`，可加到 12 个），按名称或路径过滤，勾选后导入进指定分组。同一份 `discoverDirs` 也喂设置页的应用选择器，所以扫不到的应用也不可能在设置里被选到。
+
+**组织**：分组和标签是侧栏的筛选轴；「高频」「最近使用」由每次成功打开自动记账（命令只有退出码 0 才算一次）。想改顺序就调排序轴，想换桶就调分组轴。
+
+**设置**（⌘,）四张卡片：按类型的打开方式、可用终端、应用扫描路径、已失效引用。最后一张列出指向已卸载应用的配置，「清理」只从面板里去掉这些路径，**不动磁盘文件**。
+
+**找东西**：顶部搜索框搜当前视图内的条目；⌘K 是跨全部条目的命令面板（fuzzy 匹配，↑↓ 选、Enter 执行、⌘Enter 在 Finder 显示）。
+
+## 条目与手势
+
+六类条目（卡片徽标上的名字）：`app` 应用 · `folder` 文件夹 · `file` 文件 · `url` 链接 · `snippet` 片段 · `command` 命令。
+**单击就是干活**，不需要先进菜单：
+
+| 手势 | 行为 |
+| --- | --- |
+| 单击 | 应用/文件夹/文件/链接 → 用默认应用打开；片段 → 复制内容；命令 → 后台运行 |
+| 双击（同一张卡片） | 可打开的条目弹出候选应用菜单，选「这次用哪个打开」（有 250ms 单击延迟专门让位） |
+| ⌘ 单击 | 在 Finder 中显示（只对有本地路径的条目；其余会提示「该项没有本地路径」） |
+| 右键 | 完整菜单：打开/复制/运行、在终端中打开、打开方式…、置顶、编辑、移除 |
+| 长按（触摸） | = 右键。500ms 不动即弹同一份菜单，抬手后那次单击会被吞掉，不会顺手把条目启动；滑动超过 12px 视为滚动，取消 |
+
+候选多于一个时卡片上会有「双击 N 选」徽标；候选里有已卸载的应用会显示「N 失效」，打开时自动跳过，不会报错。
+
+「移除」只删面板里的条目，**永不删磁盘文件**。
+
+## 视图：三条正交轴
+
+面板和管理页各有三个下拉，跟 Finder 一个口径：**分组方式**决定要不要分桶，**排序方式**决定桶内顺序，**视图**决定宫格还是列表。
+
+| 轴 | 面板 | 管理页 |
+| --- | --- | --- |
+| 分组方式 | 无 / 按分组 / 按类型 / 按标签 | 无 / 按分组 / 按所在目录 |
+| 排序方式 | 默认顺序 / 名称 / 使用次数 / 最近使用 | 默认顺序 / 名称 |
+| 视图 | 宫格 / 列表 | 宫格 / 列表 |
+
+- 默认档 = `分组：按分组 + 排序：默认顺序 + 视图：宫格`。
+- 面板这档叫**「默认顺序」**而不是「手动顺序」：面板没有拖拽，它就是 `items.json` 里的数组顺序。
+- 管理页**只有「分组 + 默认顺序」这一档能拖拽**（换序、拖进别的组）。拖进派生出来的桶是假动作，所以任一轴挪开就拖不动，并提示「切回『分组 + 默认顺序』才能拖拽」。
+- 三条全局规则：搜索框非空 → 强制平铺 + 按相关度排，两个下拉此时不起作用；侧栏已经筛过同一件事时不再重复分节（点进某分组 + 分组=按分组 → 平铺，标签同理）；「置顶」桶只在分节时出现（按标签除外）。
+- **按标签**是唯一多值的分桶：一条带了几个标签就在几个桶里各出现一次（标签本来就是多对多，去重会丢信息）；没打标签的收进「无标签」桶、永远排最后；桶内顺序仍跟随排序轴。**这一档不单列「置顶」**——把置顶条目抽走就等于让它从自己的标签桶里消失；置顶本身不额外做视觉标记，要看它只在侧栏「置顶」里看。
+- 排序轴在**每个桶内部**生效，「置顶」桶也一样（分桶只切池子，不重排）。
+- 视图=列表：单列、每行必显值/路径、右侧多一个「最近 MM-DD」。
+- 侧栏可收起：页头最左的按钮或 ⌘B，收起后整条不渲染、主区占满。**两页各存一档**，管理页收起了面板还是展开的。
+
+## 窄屏（< 768px）
+
+只有一个断点，两页共用（`src/useNarrow.ts`）：
+
+- **侧栏变抽屉**：同一个侧栏节点，窄屏时套上遮罩浮层 + 从左滑入；点任一筛选项后自动关，Esc / 点遮罩也关。
+- **`collapsed` 在窄屏不生效、也不被写**：抽屉开合只是临时状态，收起一个浮层不是要记住的偏好。拉回宽屏，原来的收起状态还在。
+- **页头两行**：第一行＝侧栏按钮 + 搜索框 + 全局搜索；第二行＝分组/排序/视图三轴。窄屏下所有控件同高 36px，三轴保持自然宽度、放不下才换行，不再横向滚动裁切。列表视图的「次数 / 最近日期」两列让位给名称。
+- **勾选框常显**：本来是 hover 才出现的，触摸没有 hover。
+- 右键一律用长按代替（见上表）。
+
+这一轮**只动布局**：服务照旧绑 `127.0.0.1`，所以手机现在还打不开面板。真要在手机上用，得先解决监听地址和鉴权（`/api/open`、`/api/run` 等于本机执行），那时布局不用再返工。
+
+## 打开方式与终端
+
+设置页里 **每类一个有序列表**（`folder` / `file` / `url`），第一个即默认，拖动改顺序、输入框过滤，不给「默认 + 候选」两套结构。
+条目自己的 `openWith` 覆盖类型清单；**单击用的就是这个「有效清单」里第一个还在的应用**（条目候选 → 该类型清单 → 都没有才交给 macOS），卡片值行前面的应用名就是它。
+右键「打开方式…」弹窗、卡片「双击 N 选」徽标、双击菜单和单击解析看的是**同一份有效清单**（条目候选 + 该类型清单，去重）：条目没自定义时弹窗里直接显示类型清单，**动一次手**（拖动/增删）就把这份清单固化进该条目的 `openWith`，此后设置页再改不跟它。「清空」只撤掉条目自定义，改回跟随类型清单。
+
+「在终端中打开 / 用 iTerm 打开 / 用 Warp 打开」来自**同一份终端清单**（`terminals`），系统 Terminal 永远锁在首位、不可删——三个应用共用一份，不在两处各配一遍。
+这几行只出现在 `folder` / `file` 条目上（对 `.app` 起终端没有意义），`command` 条目对应的是「在终端里运行」。
+
+## 命令条目
+
+命令支持多行。两条执行路径，输出归属不同：
+
+- **后台运行（单击）**：`$SHELL -i -c <命令>`，`cwd = ~`，stdout/stderr 一起写 `data/runs/<id>.log`（每次运行先截断，日志里永远是你正在看的那一次）。面板里的「运行输出」实时轮询这个文件（尾 64KB），能看到「运行中」和退出码。同一个 id 再次点击会被 409 挡住。
+- **在终端里运行（右键）**：先写 `data/runs/<id>.command`（`chmod 755`），再 `open -a <终端>` 它。窗口、输出和存活时间都归终端管。
+
+两条都走 `zsh -i`，因为像 `killport` 这种是 rc 文件里的**函数**，不是 PATH 上的二进制；非交互 shell 里它根本不存在。`.command` 是三家终端唯一的公共入口——Warp 没有 AppleScript 字典。
+只有**退出码 0** 才给条目记一次「使用」。
+
+## 键盘
+
+| 键 | 作用 |
+| --- | --- |
+| ⌘K | 全局搜索（命令面板，跨所有条目，↑↓ 选、Enter 执行、⌘Enter 在 Finder 显示） |
+| ⌘, | 打开设置 |
+| ⌘B | 收起/展开侧栏（两页各一档） |
+| `/` | 聚焦顶部搜索框 |
+| N | 新增条目 |
+| ⌘↵ | 编辑器保存 |
+| Esc | 关闭弹层（设置 / 右键菜单 / 运行输出 / 打开方式 / 命令面板 / 候选下拉） |
+
+## 配置：data/items.json
+
+顶层键，全部由面板自己写，可以手改（改坏了服务端会回落默认值而不是崩）：
+
+| 键 | 内容 |
+| --- | --- |
+| `items` | 条目数组，顺序即「默认顺序」。单项：`id, kind, name, value, iconPath, group, tags, pinned, useCount, lastUsedAt, createdAt, note, openWith` |
+| `tags` | 标签池 |
+| `openByKind` | `{ folder, file, url }` 三条有序应用列表 |
+| `terminals` | 终端清单（系统 Terminal 强制在首位） |
+| `discoverDirs` | 扫描目录 |
+| `appLib` | 应用管理的分组与手动顺序（`{ groups: [{ name, apps }] }`） |
+| `view` | 两页的视图偏好：`{ panel: {group,sort,layout,collapsed}, manage: {group,sort,layout,collapsed} }`（`collapsed` = 侧栏收起，默认 `false`） |
+| `theme` | 外观三档：`system`（默认，跟 macOS 走）/ `dark` / `light`；开关在设置弹窗的「外观」卡里，两页共用一档 |
+
+派生缓存也在 `data/` 下：`icons/`（提取出的 .app 图标）、`runs/`（命令日志与 `.command`）。
+
+写配置的口子只有一个 `PATCH /api/settings`，接受任意子集，**按页/按字段合并**：只传 `view.panel.layout` 不会冲掉同页的 `group`/`sort`，也不会碰到 `manage`。未知值读侧回落默认、不抛错（手改坏 items.json 不能把面板弄挂）；只有契约违规才 400（容器不是对象、页名不是 `panel`/`manage`）。
+
+## HTTP 接口
+
+全部 JSON，只在本机监听。
+
+| 方法 | 路径 | 作用 |
+| --- | --- | --- |
+| GET | `/api/state` | 条目 + 标签 + 设置 + `appsExist` + 分组列表 |
+| POST/PATCH/DELETE | `/api/items`、`/api/items/{id}` | 增 / 改 / 删（同 kind+value 重复会 409） |
+| POST | `/api/items/{id}/use` | 记一次使用 |
+| POST | `/api/open` `{kind,value,app?}` | 打开 |
+| POST | `/api/reveal` / `/api/copy` / `/api/terminal` | Finder 显示 / 写剪贴板 / 指定终端打开 |
+| POST | `/api/run` `{id, app?}` | 后台运行，或交给终端 |
+| GET | `/api/runs/{id}` | 该命令的日志尾部 + 是否还在跑 |
+| GET | `/api/discover?q=&limit=` / POST `/api/import` | 扫描 / 批量导入 |
+| GET | `/api/apps` | 扫描到的应用（喂选择器） |
+| GET/PATCH | `/api/library` | 应用管理的整表读写（数组顺序即显示顺序） |
+| PATCH | `/api/settings` | 设置局部更新（见上） |
+| POST | `/api/pick` `{kind:'folder'｜'file'}` | 原生路径选择器 |
+| GET | `/api/icon?path=` / `/api/enrich?path=` | 图标 / 补图标 |
+
+试一把：
+
+```bash
+curl -s http://127.0.0.1:5178/api/state | jq '.settings.view'
+curl -s -X PATCH http://127.0.0.1:5178/api/settings \
+  -H 'content-type: application/json' \
+  -d '{"view":{"panel":{"layout":"list"}}}' | jq '.settings.view'
+```
+
+要给 AI 下指令（加各类条目、改设置、跑命令），看 [`docs/AI-GUIDE.md`](docs/AI-GUIDE.md)——字段名、合法值、上限、错误文案、意图→接口对照表都在那一份里；根目录 [`AGENTS.md`](AGENTS.md) 是指针加红线。
+
+## 技术栈与代码结构
+
+Vite 7 + React 19 + TypeScript（strict）+ Tailwind 4。运行时依赖只有 React 两个包，服务端只用 Node 内置模块加系统命令（`open` / `osascript` / `sips` / `plutil` / `pbcopy`）。
+
+```
+index.html / manage.html   两个入口
+src/
+  App.tsx                  面板：筛选、搜索、三轴视图、右键菜单装配
+  AppManage.tsx            应用管理页：分组、重命名、拖拽
+  api.ts                   所有 /api/* 的唯一出口（类型化）
+  types.ts                 Item / Kind / ViewPrefs 等共享形状
+  fuzzy.ts                 命令面板打分
+  theme.ts                 外观档位：<html data-theme> 的读写，刻意挂在 React 之外
+  paths.ts useIcon.ts      应用名与默认应用解析 / 图标加载
+  useNarrow.ts longPress.ts 窄屏断点（768）/ 长按＝右键
+  components/              ItemCard ViewControls Settings Discover NavDrawer …
+server/
+  api.mjs                  唯一的 API：路由表在文件末尾，读写 items.json、spawn 命令
+  icon.jxa                 JXA 脚本，用 NSWorkspace 导出 .app 真图标
+  prod.mjs                 生产静态服务（同 /api/*，无 Vite）
+data/                      ← git-ignore：items.json + icons/ + runs/
+```
+
+## 它刻意不是什么
+
+- **单用户单机**。没有任何鉴权，只绑 `127.0.0.1`——别放到公网或反向代理后面。
+- **不替代 Spotlight，也不管窗口**。它只承载你自己攒的入口。
+- **不碰磁盘**。移除条目、清理失效引用都只改 `items.json`。
+- **不同步**。`items.json` 里是个人路径和条目，所以整个 `data/` 永不进版本库；备份就是拷文件。
+
+## 开发注意
+
+- `server/api.mjs` 是 Vite 中间件，和 dev server 同进程——**改这个文件会热重启并清空服务端内存缓存**（包括扫描结果）。
+- 生产入口 `server/prod.mjs` 只服务 `dist/`，未命中路径回落到 `index.html`；`/manage.html` 是第二个构建入口（`vite.config.mjs` 的 `rollupOptions.input`），新增页面要在那里登记。
+- 外观不能等 JS：`server/api.mjs` 的 `withThemeBootstrap` 在**响应时**把当前 `theme` 内联成一段阻塞脚本（dev 走 `transformIndexHtml`，prod 走 `prod.mjs`），首帧就是对的档位。所以 `dist/` 里不含主题、构建也不会把它冻住；但用别的静态服务器直接发 `dist/` 会退回 HTML 写死的 `data-theme="dark"`，浅色档下会闪一下。
+- 前端样式只有 `src/index.css` 一处 token（`ink-*` / `mute-*` / `accent`、`card-surface`、`chip`）。新增控件先看 `src/components/` 里有没有现成的（`Select`、`AppChips`、`ViewControls`、`ContextMenu`…），别再攒一份内联样式。
+
+## 许可证
+
+MIT，见 [LICENSE](LICENSE)。仓库里不含任何个人数据——`data/`（你的条目、路径、图标与命令日志）整个 git-ignore，克隆下来是一个空配置，起服务时自动写入种子条目。

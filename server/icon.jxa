@@ -1,0 +1,12 @@
+ObjC.import('AppKit')
+ObjC.import('Foundation')
+
+// argv: [sourcePath, destinationPng] — renders the Finder icon for any file, folder or app.
+function run(argv) {
+  var image = $.NSWorkspace.sharedWorkspace.iconForFile(argv[0])
+  var rep = $.NSBitmapImageRep.imageRepWithData(image.TIFFRepresentation)
+  var data = rep.representationUsingTypeProperties(4, $())
+  if (!data.writeToFileAtomically(argv[1], true)) {
+    throw new Error('icon export failed')
+  }
+}

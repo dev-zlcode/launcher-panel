@@ -1,0 +1,182 @@
+@import 'tailwindcss';
+
+/*
+ * Dark is the default, so a page with no `data-theme` still renders the original palette.
+ * Everything below is a *semantic* name — what a colour means, not where it sits — so the light
+ * block can flip it without touching a call site.
+ */
+@theme {
+  --color-ink-950: #0a0b10;
+  --color-ink-900: #101219;
+  --color-ink-800: #171a23;
+  --color-ink-700: #1f2330;
+  --color-ink-600: #2b3040;
+  --color-ink-500: #3a4154;
+  --color-mute-400: #8b93a7;
+  --color-mute-300: #aab2c5;
+  --color-paper: #eef1f8;
+  --color-accent: #6366f1;
+  --color-accent-soft: #818cf8;
+  /* The one row you're currently on — a fill, so light can tint it with the accent instead of graying. */
+  --color-select: #2b3040;
+
+  /* The two washes behind the page. */
+  --color-glow-accent: rgba(99, 102, 241, 0.16);
+  --color-glow-teal: rgba(20, 184, 166, 0.1);
+  /* A dialog's veil, and the shadow it casts. */
+  --color-scrim: rgba(0, 0, 0, 0.55);
+  --color-shadow: rgba(0, 0, 0, 1);
+
+  /* One hue per state, used as text, as a /40 border and as a /10 fill alike. */
+  --color-danger: #f87171;
+  --color-info: #7dd3fc;
+  --color-warn: #fcd34d;
+  --color-ok: #5eead4;
+
+  /* KIND_META in ItemCard: the type badge, which sits on a chip. */
+  --color-kind-app: #818cf8;
+  --color-kind-folder: #fbbf24;
+  --color-kind-file: #5eead4;
+  --color-kind-url: #f472b6;
+  --color-kind-snippet: #a3a3a3;
+  --color-kind-command: #a3e635;
+
+  --font-sans: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Helvetica Neue', 'Segoe UI', sans-serif;
+  --font-mono: 'SF Mono', ui-monospace, Menlo, monospace;
+
+  --radius-card: 14px;
+}
+
+/*
+ * The only light-mode switch: every utility above compiles to var()/color-mix over these names, so
+ * re-declared here they flip ~370 call sites at once. Unlayered on purpose — an author declaration
+ * beats Tailwind's `@layer theme` regardless of where it appears in the output.
+ */
+html[data-theme='light'] {
+  color-scheme: light;
+
+  /* The ink ramp in light is borders and gentle fills only — surfaces themselves go to white so cards
+     and dialogs lift off the faint gray page instead of turning into gray blocks. */
+  --color-ink-950: #f2f3f7;
+  --color-ink-900: #ffffff;
+  --color-ink-800: #ffffff;
+  --color-ink-700: #e9ebf2;
+  --color-ink-600: #d8dce7;
+  --color-ink-500: #c2c9d8;
+  --color-mute-400: #646e85;
+  --color-mute-300: #3f4859;
+  --color-paper: #121622;
+  --color-accent: #4f46e5;
+  --color-accent-soft: #6366f1;
+  --color-select: rgba(79, 70, 229, 0.12);
+
+  --color-glow-accent: rgba(99, 102, 241, 0.09);
+  --color-glow-teal: rgba(20, 184, 166, 0.06);
+  --color-scrim: rgba(18, 22, 34, 0.3);
+  --color-shadow: rgba(18, 22, 34, 0.3);
+
+  --color-danger: #dc2626;
+  --color-info: #0369a1;
+  --color-warn: #b45309;
+  --color-ok: #0f766e;
+
+  --color-kind-app: #4338ca;
+  --color-kind-folder: #b45309;
+  --color-kind-file: #0f766e;
+  --color-kind-url: #be185d;
+  --color-kind-snippet: #525252;
+  --color-kind-command: #4d7c0f;
+}
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  html {
+    color-scheme: dark;
+  }
+
+  body {
+    margin: 0;
+    background:
+      radial-gradient(1200px 600px at 15% -10%, var(--color-glow-accent), transparent 60%),
+      radial-gradient(900px 500px at 100% 0%, var(--color-glow-teal), transparent 55%),
+      var(--color-ink-950);
+    color: var(--color-paper);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    overflow: hidden;
+  }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--color-ink-600);
+    border-radius: 8px;
+    border: 3px solid transparent;
+    background-clip: content-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--color-ink-500);
+    background-clip: content-box;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  button {
+    font: inherit;
+    color: inherit;
+  }
+
+  input,
+  textarea {
+    font: inherit;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-accent-soft);
+    outline-offset: 2px;
+  }
+}
+
+@utility card-surface {
+  background: color-mix(in oklab, var(--color-ink-800) 78%, transparent);
+  border: 1px solid color-mix(in oklab, var(--color-ink-600) 70%, transparent);
+  backdrop-filter: blur(10px);
+}
+
+@utility chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: 999px;
+  padding: 1px 8px;
+  font-size: 11px;
+  line-height: 18px;
+  background: var(--color-ink-700);
+  color: var(--color-mute-300);
+}
+
+@keyframes pop-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* The narrow-screen sidebar: it slides in from the left edge rather than popping, so it reads as a drawer. */
+@keyframes slide-in {
+  from {
+    transform: translateX(-100%);
+  }
+}
