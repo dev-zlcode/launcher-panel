@@ -6,13 +6,15 @@ import { Icon } from './Icon'
 
 interface Props {
   items: Item[]
-  onActivate: (item: Item) => void
+  /** Mouse click on a row: find that item on the page. Acting on it stays on Enter. */
+  onLocate: (item: Item) => void
+  /** Enter: do what the item means — copy a snippet, run a command, open anything else. */
+  onPerform: (item: Item) => void
   onReveal: (item: Item) => void
-  onEdit: (item: Item) => void
   onClose: () => void
 }
 
-export function CommandPalette({ items, onActivate, onReveal, onEdit, onClose }: Props) {
+export function CommandPalette({ items, onLocate, onPerform, onReveal, onClose }: Props) {
   const [query, setQuery] = useState('')
   const [cursor, setCursor] = useState(0)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -46,7 +48,7 @@ export function CommandPalette({ items, onActivate, onReveal, onEdit, onClose }:
   const pick = (item: Item, reveal: boolean) => {
     onClose()
     if (reveal) onReveal(item)
-    else onActivate(item)
+    else onPerform(item)
   }
 
   return (
@@ -94,7 +96,7 @@ export function CommandPalette({ items, onActivate, onReveal, onEdit, onClose }:
               key={item.id}
               type="button"
               onMouseEnter={() => setCursor(i)}
-              onClick={() => pick(item, false)}
+              onClick={(e) => (e.metaKey || e.ctrlKey ? pick(item, true) : onLocate(item))}
               className={`flex w-full items-center gap-3 rounded-lg px-2.5 py-2 text-left transition
                 ${i === cursor ? 'bg-select' : 'hover:bg-ink-700'}`}
             >
@@ -106,28 +108,15 @@ export function CommandPalette({ items, onActivate, onReveal, onEdit, onClose }:
               <span className="chip shrink-0" style={{ color: KIND_META[item.kind].color }}>
                 {KIND_META[item.kind].label}
               </span>
-              {i === cursor && (
-                <span
-                  role="button"
-                  tabIndex={-1}
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    onEdit(item)
-                    onClose()
-                  }}
-                  className="text-[11px] text-mute-400 underline decoration-dotted hover:text-paper"
-                >
-                  编辑
-                </span>
-              )}
             </button>
           ))}
         </div>
 
         <div className="flex items-center gap-4 border-t border-ink-700 px-4 py-2 text-[10.5px] text-mute-400">
-          <span>↵ 打开</span>
+          <span>↵ 执行</span>
           <span>⌘↵ 在 Finder 显示</span>
           <span>↑↓ 选择</span>
+          <span>单击定位</span>
           <span className="ml-auto">{results.length} 条结果</span>
         </div>
       </div>

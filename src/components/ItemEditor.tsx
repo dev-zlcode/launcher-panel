@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { api } from '../api'
 import type { AppEntry, Item, ItemDraft, Kind, OpenByKind, OpenKind } from '../types'
-import type { ExistMap } from '../paths'
+import { canPickApps, type ExistMap } from '../paths'
 import { AppChips } from './AppChips'
 import { AppList, filterApps, moveCursor, useInstalledApps, withStoredPaths } from './AppList'
 import { KIND_META } from './ItemCard'
@@ -56,7 +56,7 @@ export function ItemEditor({ editing, groups, appsExist, openByKind, onClose, on
     setAppCursor(0)
   }, [editing])
 
-  const canPickApp = draft.kind !== 'snippet' && draft.kind !== 'command'
+  const canPickApp = canPickApps(draft.kind)
   /** A command is a script and a snippet is pasted text: both lose their line breaks in an <input>. */
   const isMulti = draft.kind === 'snippet' || draft.kind === 'command'
   const apps = useInstalledApps(onError)
@@ -115,7 +115,8 @@ export function ItemEditor({ editing, groups, appsExist, openByKind, onClose, on
   const save = async () => {
     if (busy) return
     const tags = tagText.split(/[,，]/).map((t) => t.trim()).filter(Boolean)
-    const payload = { ...draft, tags }
+    // 不可选应用的类型不留隐藏候选：编辑器已经不显示这块了。
+    const payload = { ...draft, tags, openWith: canPickApp ? (draft.openWith ?? []) : [] }
     if (!payload.value.trim()) {
       onError(`${VALUE_FIELD[draft.kind].label}不能为空`)
       return

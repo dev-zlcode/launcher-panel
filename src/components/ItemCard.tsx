@@ -1,7 +1,7 @@
 import { useRef } from 'react'
 import type { Item, Kind, Layout, OpenByKind } from '../types'
 import { colorFor, initials } from '../fuzzy'
-import { appInstalled, appNameOf, candidateApps, liveCandidates, resolveDefaultApp, type ExistMap } from '../paths'
+import { appInstalled, appNameOf, candidateApps, liveCandidates, ownApps, resolveDefaultApp, type ExistMap } from '../paths'
 import { useIcon, useInView } from '../useIcon'
 import { longPress } from '../longPress'
 
@@ -84,6 +84,8 @@ interface CardProps {
   onActivate: (item: Item, pos: { x: number; y: number }) => void
   onReveal: (item: Item) => void
   onMenu: (item: Item, pos: { x: number; y: number }) => void
+  /** 命令面板定位到这张卡片时框一下，1.8s 后自己退掉。 */
+  flash?: boolean
 }
 
 /** MM-DD — the list view has room for a date, not for a timestamp. */
@@ -91,19 +93,21 @@ function lastUsed(iso: string) {
   return new Date(iso).toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' })
 }
 
-export function ItemCard({ item, layout, appsExist, openByKind, onActivate, onReveal, onMenu }: CardProps) {
+export function ItemCard({ item, layout, appsExist, openByKind, onActivate, onReveal, onMenu, flash }: CardProps) {
   const meta = KIND_META[item.kind]
   const press = longPress((pos) => onMenu(item, pos))
   const exist = appsExist ?? {}
   const { app: current } = resolveDefaultApp(item, exist, openByKind)
-  const { dead } = liveCandidates(item.openWith, exist)
+  const { dead } = liveCandidates(ownApps(item), exist)
   const extra = candidateApps(item, openByKind).filter((app) => app !== current && appInstalled(app, exist)).length
   const gesture =
     item.kind === 'snippet'
       ? '单击复制'
       : item.kind === 'command'
         ? '单击运行'
-        : `单击用${appNameOf(current)}打开${extra ? ` · 双击可选其他 ${extra} 个应用` : ' · 双击可换应用'}`
+        : item.kind === 'app'
+          ? '单击启动该应用'
+          : `单击用${appNameOf(current)}打开${extra ? ` · 双击可选其他 ${extra} 个应用` : ' · 双击可换应用'}`
   const title = (
     <>
       <span
@@ -136,6 +140,7 @@ export function ItemCard({ item, layout, appsExist, openByKind, onActivate, onRe
   )
   return (
     <button
+      id={`card-${item.id}`}
       type="button"
       title={`${item.value}\n${item.note ? item.note + '\n' : ''}${gesture}${
         dead.length ? `（未安装：${dead.map(appNameOf).join('、')}）` : ''
@@ -150,7 +155,8 @@ export function ItemCard({ item, layout, appsExist, openByKind, onActivate, onRe
       }}
       className={`card-surface group relative flex w-full items-center gap-3 text-left transition
         hover:-translate-y-px hover:border-accent/60 hover:bg-ink-700 active:translate-y-0
-        ${layout === 'list' ? 'rounded-lg px-3 py-1.5' : 'rounded-(--radius-card) px-4 py-3.5'}`}
+        ${layout === 'list' ? 'rounded-lg px-3 py-1.5' : 'rounded-(--radius-card) px-4 py-3.5'}
+        ${flash ? 'bg-select ring-2 ring-accent' : ''}`}
     >
       <ItemIcon item={item} size={layout === 'list' ? 28 : 40} badge={layout === 'grid' ? extra : undefined} />
       {layout === 'list' ? (

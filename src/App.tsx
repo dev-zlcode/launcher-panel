@@ -17,7 +17,7 @@ import { Sidebar } from './components/Sidebar'
 import { NavDrawer } from './components/NavDrawer'
 import { useNarrow } from './useNarrow'
 import { Toasts, type Toast } from './components/Toasts'
-import { appNameOf, candidateApps, openWithLabel, primeAppNames, resolveDefaultApp, terminalRows, type ExistMap } from './paths'
+import { appNameOf, canPickApps, candidateApps, openWithLabel, primeAppNames, resolveDefaultApp, terminalRows, type ExistMap } from './paths'
 
 const EMPTY_OPEN: OpenByKind = { folder: [], file: [], url: [] }
 
@@ -75,6 +75,7 @@ export function App() {
   const [picker, setPicker] = useState<Item | null>(null)
   /** Last run per command item, and which item's output is on screen. Memory only — nothing here is config. */
   const [runs, setRuns] = useState<Record<string, RunMark>>({})
+  const [flash, setFlash] = useState<{ id: string; seq: number } | null>(null)
   const [resultFor, setResultFor] = useState<string | null>(null)
 
   const [toasts, setToasts] = useState<Toast[]>([])
@@ -317,12 +318,11 @@ export function App() {
   const tap = useRef<{ id: string; at: number; timer: number } | null>(null)
 
   /**
-   * Single click waits 250ms on purpose: a second click on the same card should mean "let me pick",
-   * and by then the first click must not have launched anything. Snippets and commands have nothing
-   * to pick, so they act straight away.
+   * What an action key means, by kind: copy, run, or open. Feeding this straight to `/api/open` instead
+   * would 400 on a command and silently no-op on a snippet — the server only opens folder/file/url/app.
    */
-  const activate = useCallback(
-    (item: Item, pos?: Pos) => {
+  const perform = useCallback(
+    (item: Item) => {
       if (item.kind === 'snippet') {
         api
           .copy(item.value)
@@ -332,6 +332,22 @@ export function App() {
       }
       if (item.kind === 'command') {
         runCommand(item)
+        return
+      }
+      openDefault(item)
+    },
+    [openDefault, push, runCommand, toastErr],
+  )
+
+  /**
+   * Single click waits 250ms on purpose: a second click on the same card should mean "let me pick",
+   * and by then the first click must not have launched anything. Only folder/file/url can be opened by
+   * another app, so only they wait — snippets, commands and apps act straight away.
+   */
+  const activate = useCallback(
+    (item: Item, pos?: Pos) => {
+      if (!canPickApps(item.kind)) {
+        perform(item)
         return
       }
       const now = Date.now()
@@ -346,9 +362,11 @@ export function App() {
         tap.current = null
         openDefault(item)
       }, 250)
+      // A click on another card cancels the pending one — otherwise both would open.
+      if (prev) window.clearTimeout(prev.timer)
       tap.current = { id: item.id, at: now, timer }
     },
-    [openAppMenu, openDefault, push, runCommand, toastErr],
+    [openAppMenu, openDefault, perform],
   )
 
   const reveal = useCallback(
@@ -362,6 +380,29 @@ export function App() {
     },
     [push, toastErr],
   )
+
+  /**
+   * The palette's single click: bring this item into the current view (clearing whatever filter hid it)
+   * and frame it. Opening stays on Enter — the palette is for finding, not for acting.
+   */
+  const locate = useCallback(
+    (item: Item) => {
+      setPalette(false)
+      if (!visible.some((i) => i.id === item.id)) {
+        setFilter({ scope: 'smart', value: 'all' })
+        setQuery('')
+      }
+      setFlash((f) => ({ id: item.id, seq: (f?.seq ?? 0) + 1 }))
+    },
+    [visible],
+  )
+
+  useEffect(() => {
+    if (!flash) return
+    document.getElementById(`card-${flash.id}`)?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+    const t = window.setTimeout(() => setFlash(null), 1800)
+    return () => window.clearTimeout(t)
+  }, [flash])
 
   const runTerminal = useCallback(
     async (item: Item, app: string) => {
@@ -454,9 +495,9 @@ export function App() {
       // Only once it has run: a greyed-out row for a command you never started is just noise.
       if (runs[item.id]) entries.push({ label: '运行输出', onSelect: () => setResultFor(item.id) })
     }
-    // A snippet has nothing to open with, and neither does a command. 「本次用其他应用打开」 was a
+    // Only folder/file/url can be opened by another app (see canPickApps). 「本次用其他应用打开」 was a
     // duplicate of the double-click menu, so the right-click keeps only the persistent 「打开方式…」.
-    if (item.kind !== 'snippet' && item.kind !== 'command') {
+    if (canPickApps(item.kind)) {
       entries.push({
         label: '打开方式…',
         hint: openWithLabel(candidateApps(item, openByKind)) || undefined,
@@ -609,6 +650,7 @@ export function App() {
                       onActivate={activate}
                       onReveal={reveal}
                       onMenu={openItemMenu}
+                      flash={flash?.id === item.id}
                     />
                   ))}
                 </div>
@@ -618,7 +660,13 @@ export function App() {
       </main>
 
       {palette && (
-        <CommandPalette items={items} onActivate={openDefault} onReveal={reveal} onEdit={(item) => setEditor({ open: true, editing: item })} onClose={() => setPalette(false)} />
+        <CommandPalette
+          items={items}
+          onLocate={locate}
+          onPerform={perform}
+          onReveal={reveal}
+          onClose={() => setPalette(false)}
+        />
       )}
       {editor.open && (
         <ItemEditor

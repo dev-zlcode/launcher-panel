@@ -47,6 +47,15 @@ export function kindApps(kind: Item['kind'], openByKind: OpenByKind): string[] {
 }
 
 /**
+ * Only these three can be opened *by* another app, so `app`/`snippet`/`command` have no candidates at
+ * all — the editor hides them and the read side ignores whatever an old record still carries.
+ * For `app` the server would run `open -a 候选 X.app` — handing one app to another as a document.
+ */
+export function canPickApps(kind: Item['kind']): boolean {
+  return kind === 'folder' || kind === 'file' || kind === 'url'
+}
+
+/**
  * What a single click opens with: this kind's ordered pool (the item's own candidates, then its kind's
  * settings list) taken down to what is still installed — first live entry wins, otherwise null = macOS.
  * `dead` only counts what the item itself wrote, so a stale app in the shared type list is not this
@@ -58,13 +67,18 @@ export function resolveDefaultApp(
   openByKind: OpenByKind,
 ): { app: string | null; dead: string[] } {
   const { alive } = liveCandidates(candidateApps(item, openByKind), exist)
-  return { app: alive[0] ?? null, dead: liveCandidates(item.openWith, exist).dead }
+  return { app: alive[0] ?? null, dead: liveCandidates(ownApps(item), exist).dead }
+}
+
+/** The item's own candidates — kinds that can't be opened by another app have none, however stale the record. */
+export function ownApps(item: Item): string[] {
+  return canPickApps(item.kind) ? item.openWith : []
 }
 
 /** Every app the chooser may offer: the item's own candidates, then this kind's list. */
 export function candidateApps(item: Item, openByKind: OpenByKind): string[] {
   const out: string[] = []
-  for (const app of [...item.openWith, ...kindApps(item.kind, openByKind)]) {
+  for (const app of [...ownApps(item), ...kindApps(item.kind, openByKind)]) {
     if (!out.includes(app)) out.push(app)
   }
   return out
