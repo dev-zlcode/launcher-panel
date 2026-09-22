@@ -220,7 +220,7 @@ curl -s $BASE/api/library | jq '{ungroupedName, autoGroupNames, groups:[.groups[
     → 都没有＝交给 macOS（系统默认）
 ```
 
-- `candidateApps(item, openByKind)`（`src/paths.ts`）把上面两级拼成**有效清单**（顺序保留、去重），**每次打开时实时算**。卡片值行前面的应用名、「双击 N 选」徽标、双击菜单、右键「打开方式…」的提示词、弹窗里的「当前候选」——**都是这一份**。
+- `candidateApps(item, openByKind)`（`src/paths.ts`）把上面两级拼成**有效清单**（顺序保留、去重），**每次打开时实时算**。卡片值行前面的应用名、图标右下角的「`+N`」角标（宫格才有，读作另外还有 N 个候选）、双击菜单、右键「打开方式…」的提示词、弹窗里的「当前候选」——**都是这一份**。
 - 单击用的就是这份清单里**第一个还在安装的**应用（`resolveDefaultApp`）。
 - **编辑即固化**：只要他在弹窗/编辑器里动过一次手（拖动、增、删、清空），整份清单就被写进该条目的 `openWith`，此后设置页再改不跟它。「清空」＝写 `[]`＝改回跟随类型清单。
 - 只有 `folder`/`file`/`url` 有"用别的应用打开"的含义；`app`/`snippet`/`command` 没有类型清单。

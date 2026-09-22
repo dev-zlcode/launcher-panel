@@ -115,7 +115,7 @@ export function ContextMenu({ x, y, title, entries, numbered = false, onClose }:
                 {entry.iconPath && <Glyph path={entry.iconPath} />}
                 <span className="min-w-0 flex-1 truncate">{entry.label}</span>
                 {hint && (
-                  <span className={`shrink-0 text-mute-300 ${hintKey ? 'font-mono text-[16px]' : 'text-[12px]'}`}>{hint}</span>
+                  <span className={`shrink-0 text-[13px] font-medium text-mute-300 ${hintKey ? 'font-mono' : ''}`}>{hint}</span>
                 )}
               </button>
             </div>

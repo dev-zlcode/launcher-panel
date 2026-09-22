@@ -31,7 +31,16 @@ function faviconFor(url: string): string | null {
 
 export type IconSubject = Pick<Item, 'name' | 'value' | 'iconPath' | 'kind'>
 
-export function ItemIcon({ item, size = 40 }: { item: IconSubject; size?: number }) {
+export function ItemIcon({
+  item,
+  size = 40,
+  badge,
+}: {
+  item: IconSubject
+  size?: number
+  /** 另有几个候选应用。渲染在图标右下角，替掉名称行里那个占位的文字徽标。 */
+  badge?: number
+}) {
   const ref = useRef<HTMLSpanElement>(null)
   const seen = useInView(ref)
   const fileIcon = useIcon(seen ? item.iconPath : null)
@@ -39,7 +48,7 @@ export function ItemIcon({ item, size = 40 }: { item: IconSubject; size?: number
   const src = fileIcon ?? webIcon
 
   return (
-    <span ref={ref} style={{ width: size, height: size }} className="grid shrink-0 place-items-center">
+    <span ref={ref} style={{ width: size, height: size }} className="relative grid shrink-0 place-items-center">
       {src ? (
         <img
           src={src}
@@ -57,6 +66,11 @@ export function ItemIcon({ item, size = 40 }: { item: IconSubject; size?: number
           {initials(item.name)}
         </span>
       )}
+      {badge ? (
+        <span className="absolute -bottom-[3px] -right-1.5 rounded-full border border-ink-600 bg-ink-900 px-[4px] font-mono text-[9px] leading-[14px] text-mute-300">
+          +{badge}
+        </span>
+      ) : null}
     </span>
   )
 }
@@ -89,24 +103,33 @@ export function ItemCard({ item, layout, appsExist, openByKind, onActivate, onRe
       ? '单击复制'
       : item.kind === 'command'
         ? '单击运行'
-        : `单击用${appNameOf(current)}打开${extra ? ` · 双击可选 ${extra + 1} 个应用` : ' · 双击可换应用'}`
+        : `单击用${appNameOf(current)}打开${extra ? ` · 双击可选其他 ${extra} 个应用` : ' · 双击可换应用'}`
   const title = (
     <>
-      <span className="truncate text-[13px] font-medium text-paper">{item.name}</span>
-      {extra > 0 && (
-        <span className="chip shrink-0 border border-info/40 text-info" title="双击可选其他应用">
-          双击 {extra + 1} 选
-        </span>
-      )}
+      <span
+        className={`truncate font-medium text-paper ${layout === 'list' ? 'text-[13px]' : 'text-[14px] leading-[20px]'}`}
+      >
+        {item.name}
+      </span>
+      {/* 警示不能藏进 hover，但也不该和名称抢分量：比 chip 小一档，且不借用 chip 类免得覆盖打架。 */}
       {dead.length > 0 && (
-        <span className="chip shrink-0 border border-warn/40 text-warn" title="候选里有未安装的应用，打开时会自动跳过">
+        <span
+          className="shrink-0 rounded-full border border-warn/40 px-[5px] text-[10px] leading-[14px] text-warn"
+          title="候选里有未安装的应用，打开时会自动跳过"
+        >
           {dead.length} 失效
         </span>
       )}
     </>
   )
   const value = (
-    <span className={layout === 'list' ? 'min-w-0 flex-1 truncate font-mono text-[10.5px] text-mute-400' : 'mt-0.5 block truncate font-mono text-[10.5px] text-mute-400'}>
+    <span
+      className={
+        layout === 'list'
+          ? 'min-w-0 flex-1 truncate font-mono text-[10.5px] text-mute-400'
+          : 'mt-[7px] block truncate font-mono text-[11px] text-mute-400'
+      }
+    >
       {current && <span className="text-info/80">{appNameOf(current)} · </span>}
       {previewValue(item.value)}
     </span>
@@ -116,7 +139,7 @@ export function ItemCard({ item, layout, appsExist, openByKind, onActivate, onRe
       type="button"
       title={`${item.value}\n${item.note ? item.note + '\n' : ''}${gesture}${
         dead.length ? `（未安装：${dead.map(appNameOf).join('、')}）` : ''
-      } · 已用 ${item.useCount} 次`}
+      }`}
       {...press}
       onClick={(e) =>
         e.metaKey || e.ctrlKey ? onReveal(item) : onActivate(item, { x: e.clientX, y: e.clientY })
@@ -127,9 +150,9 @@ export function ItemCard({ item, layout, appsExist, openByKind, onActivate, onRe
       }}
       className={`card-surface group relative flex w-full items-center gap-3 text-left transition
         hover:-translate-y-px hover:border-accent/60 hover:bg-ink-700 active:translate-y-0
-        ${layout === 'list' ? 'rounded-lg px-3 py-1.5' : 'rounded-(--radius-card) px-3.5 py-3'}`}
+        ${layout === 'list' ? 'rounded-lg px-3 py-1.5' : 'rounded-(--radius-card) px-4 py-3.5'}`}
     >
-      <ItemIcon item={item} size={layout === 'list' ? 28 : 40} />
+      <ItemIcon item={item} size={layout === 'list' ? 28 : 40} badge={layout === 'grid' ? extra : undefined} />
       {layout === 'list' ? (
         <span className="flex min-w-0 flex-1 items-center gap-2">
           <span className="flex max-w-[46%] shrink-0 items-center gap-1.5">{title}</span>
@@ -146,20 +169,14 @@ export function ItemCard({ item, layout, appsExist, openByKind, onActivate, onRe
           <span className="chip" style={{ color: meta.color }}>
             {meta.label}
           </span>
-          {/* 次数与最近日期只有 hover 的 tooltip 补充意义，窄屏先让位给名字和路径。 */}
-          <span className="w-7 text-right font-mono text-[10px] text-mute-400 max-md:hidden">
-            {item.useCount > 0 ? `${item.useCount}×` : ''}
-          </span>
+          {/* 最近日期只有 hover 的 tooltip 补充意义，窄屏先让位给名字和路径。 */}
           <span className="w-11 text-right font-mono text-[10px] text-mute-400 max-md:hidden">
             {item.lastUsedAt ? lastUsed(item.lastUsedAt) : '—'}
           </span>
         </span>
       ) : (
-        <span className="flex shrink-0 flex-col items-end gap-1">
-          <span className="chip" style={{ color: meta.color }}>
-            {meta.label}
-          </span>
-          {item.useCount > 0 && <span className="font-mono text-[10px] text-mute-400">{item.useCount}×</span>}
+        <span className="chip shrink-0" style={{ color: meta.color }}>
+          {meta.label}
         </span>
       )}
     </button>

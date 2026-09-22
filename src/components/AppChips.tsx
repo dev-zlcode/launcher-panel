@@ -19,6 +19,8 @@ interface Props {
   firstIsDefault?: boolean
   /** Entries that are always on: shown with a 默认 badge instead of a delete button. */
   locked?: string[]
+  /** 传了就给 chip 正文挂上点击（弹窗里「顺手用这个应用打开」）；不传保持纯管理控件。 */
+  onPick?: (app: string) => void
 }
 
 function move(list: string[], from: number, to: number): string[] {
@@ -38,6 +40,7 @@ export function AppChips({
   placeholder = '搜索并添加应用…',
   firstIsDefault = true,
   locked = [],
+  onPick,
 }: Props) {
   const [q, setQ] = useState('')
   const [open, setOpen] = useState(false)
@@ -82,10 +85,11 @@ export function AppChips({
             onDragOver={(e) => e.preventDefault()}
             onDrop={(e) => e.preventDefault()}
             onDragEnd={() => (dragFrom.current = null)}
-            title={`${app}\n拖动可调整顺序${idx === 0 && firstIsDefault ? '，第一个即默认' : ''}${isLocked ? ' · 系统自带，不可删除' : ''}`}
-            className={`chip flex cursor-grab items-center gap-1 border border-ink-600 py-1 pl-2 pr-1 text-[12px] text-paper active:cursor-grabbing ${
-              isLocked ? 'bg-ink-700/70' : 'bg-ink-800/70'
-            } ${missing ? 'opacity-70' : ''}`}
+            title={`${app}\n拖动可调整顺序${idx === 0 && firstIsDefault ? '，第一个即默认' : ''}${isLocked ? ' · 系统自带，不可删除' : ''}${onPick ? ` · 点一下用${appNameOf(app)}打开` : ''}`}
+            onClick={onPick ? () => onPick(app) : undefined}
+            className={`chip flex items-center gap-1 border border-ink-600 py-1 pl-2 pr-1 text-[12px] text-paper ${
+              onPick ? 'cursor-pointer hover:border-accent/60' : 'cursor-grab active:cursor-grabbing'
+            } ${isLocked ? 'bg-ink-700/70' : 'bg-ink-800/70'} ${missing ? 'opacity-70' : ''}`}
           >
             <span className="font-mono text-[10px] text-mute-400">{idx + 1}</span>
             {appNameOf(app)}
@@ -98,7 +102,11 @@ export function AppChips({
             ) : (
               <button
                 type="button"
-                onClick={() => onChange(value.filter((a) => a !== app))}
+                onClick={(e) => {
+                  // chip 正文现在可点（打开），移除必须挡住冒泡，否则一次点击又删又开。
+                  e.stopPropagation()
+                  onChange(value.filter((a) => a !== app))
+                }}
                 className="grid place-items-center rounded p-1 text-mute-400 transition hover:bg-ink-600 hover:text-paper"
                 aria-label={`移除 ${appNameOf(app)}`}
               >

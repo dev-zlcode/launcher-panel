@@ -595,8 +595,8 @@ export function App() {
                   </h3>
                 )}
                 <div
-                  className={`grid gap-2 ${
-                    layout === 'list' ? 'grid-cols-1 gap-1.5' : 'grid-cols-[repeat(auto-fill,minmax(268px,1fr))]'
+                  className={`grid ${
+                    layout === 'list' ? 'grid-cols-1 gap-1.5' : 'gap-3 grid-cols-[repeat(auto-fill,minmax(320px,1fr))]'
                   }`}
                 >
                   {section.items.map((item) => (

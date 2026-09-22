@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { api } from '../api'
-import { candidateApps, type ExistMap } from '../paths'
+import { appNameOf, candidateApps, type ExistMap } from '../paths'
 import type { AppEntry, Item, OpenByKind } from '../types'
 import { AppChips } from './AppChips'
 import { AppList, filterApps, useInstalledApps, withStoredPaths } from './AppList'
@@ -59,10 +59,20 @@ export function AppPicker({ target, openByKind, appsExist, onClose, onDone, onEr
     }
   }
 
+  /** 管理档里顺手用某个候选开一次：只发 /api/open，不写 openWith，也不关弹窗（他可能还在排序）。 */
+  const openOnceWith = async (app: string) => {
+    try {
+      await api.open(target.kind, target.value, app)
+      onDone(`已用 ${appNameOf(app)} 打开`)
+    } catch (err) {
+      onError(String((err as Error).message))
+    }
+  }
+
   const hint =
     scope === 'once'
       ? '点击立即用所选应用打开，不改动配置'
-      : '拖动可调整顺序：第一个用于单击，其余在双击菜单里挑'
+      : '拖动可调整顺序：第一个用于单击，其余在双击菜单里挑 · 点一下＝就用它打开，不改配置'
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-scrim px-4 backdrop-blur-sm" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
@@ -113,6 +123,7 @@ export function AppPicker({ target, openByKind, appsExist, onClose, onDone, onEr
             <AppChips
               value={list}
               onChange={(next) => persist(next, `「${target.name}」候选已更新（${next.length} 个）`)}
+              onPick={openOnceWith}
               options={options}
               exist={appsExist}
               placeholder="搜索并添加…"
