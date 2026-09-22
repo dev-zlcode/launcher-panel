@@ -5,6 +5,7 @@ import type { Item, RunOutput } from '../types'
 interface Props {
   item: Item
   onRerun: (item: Item) => void
+  onStop: (item: Item) => void
   onCopy: (text: string, label: string) => void
   onClose: () => void
 }
@@ -23,7 +24,7 @@ function clock(iso: string | null) {
  * this never touches the process. The log file is the source of truth, which means reopening after a
  * panel restart still shows what the last run said.
  */
-export function RunResult({ item, onRerun, onCopy, onClose }: Props) {
+export function RunResult({ item, onRerun, onStop, onCopy, onClose }: Props) {
   const [data, setData] = useState<RunOutput | null>(null)
   const [error, setError] = useState<string | null>(null)
   const box = useRef<HTMLDivElement>(null)
@@ -134,13 +135,21 @@ export function RunResult({ item, onRerun, onCopy, onClose }: Props) {
           >
             复制输出
           </button>
+          {running && (
+            <button
+              type="button"
+              onClick={() => onStop(item)}
+              className={`${btn} border border-ink-600 text-paper hover:border-accent/60 hover:bg-ink-700`}
+            >
+              停止
+            </button>
+          )}
           <button
             type="button"
-            disabled={running}
             onClick={() => onRerun(item)}
             className={`${btn} bg-accent font-medium text-white hover:bg-accent-soft`}
           >
-            {running ? '运行中…' : '重新运行'}
+            {running ? '重新执行' : '重新运行'}
           </button>
         </div>
       </div>

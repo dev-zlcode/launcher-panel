@@ -134,7 +134,8 @@ curl -s -X PATCH $BASE/api/items/$ID -H 'content-type: application/json' \
 | 动作 | 请求 | 关键点 |
 | --- | --- | --- |
 | 打开 | `POST /api/open` `{kind,value,app?}` | `app` 是**这次**用哪个应用，必须 `.app` 且真实存在；路径不存在 → 404 `路径不存在: <path>` |
-| 后台运行命令 | `POST /api/run` `{id}` | **只认 id，不接受命令文本**。立即返回 `{ok,started,command,log}`；同 id 还在跑 → 409 `这条命令正在运行中` |
+| 后台运行命令 | `POST /api/run` `{id}` \| `{id,restart:true}` \| `{id,stop:true}` | **只认 id，不接受命令文本**。立即返回 `{ok,started,command,log}`；同 id 还在跑且**没带** `restart` → 409 `这条命令正在运行中`。`restart:true` 先对面板亲手起的进程 SIGTERM（3s 不退再 SIGKILL）再起一次。`stop:true` 只停不起，回 `{ok,stopped:true}`，日志原样留着 |
+| 停掉正在跑的命令 | `POST /api/run` `{id,stop:true}` | 同上 SIGTERM→3s SIGKILL。**只认这一份服务亲手起的进程**；服务重启后留下的孤儿进程没有句柄 → 409 `这条不是当前服务起的进程，停不掉` |
 | 交给终端运行 | `POST /api/run` `{id,app}` | 写 `data/runs/<id>.command`（`chmod 755`）后 `open -a` 它；窗口/输出归终端 |
 | 看输出 | `GET /api/runs/{id}` | `{running,startedAt,code,command,text,droppedBytes}`；`text` 是日志尾 64KB 去掉 ANSI 和 shell 噪声 |
 | Finder 显示 | `POST /api/reveal` `{value}` | |
@@ -145,6 +146,7 @@ curl -s -X PATCH $BASE/api/items/$ID -H 'content-type: application/json' \
 关于命令的两条硬约束（**别试图"改进"**）：
 - 执行一律走 `$SHELL -i -c`（`cwd = ~`），因为像 `killport` 这类是他 rc 文件里的**函数**，非交互 shell 里不存在。
 - **只有退出码 0 才给条目记一次使用。** `GET /api/runs/:id` 的 `code` 在服务重启后会变回 `null`（内存态），日志文件才是事实。
+- **面板自己会去问 `GET /api/runs/:id`**，为的是卡片名称后面那颗「运行中」标签（样式同「N 失效」，`ItemCard` 的 `running` prop）：开页时对每条命令探一次（覆盖页面加载前就在跑的常驻进程），之后只要还有 running 的就每秒轮那几条，全停了定时器就消失。别改成常驻秒级轮询所有命令条目。右键「停止运行」/ 输出弹层「停止」成功后前端立刻把这条 mark 改成 `running:false`，标签不用等下一轮轮询才消失。
 
 ### 3.6 批量发现与导入
 
@@ -270,6 +272,8 @@ curl -s $BASE/api/library | jq '{ungroupedName, autoGroupNames, groups:[.groups[
 | 应用管理：把某 App 挪进某组 | `GET /api/library` → 改数组 → `PATCH /api/library`（**整表替换**） | 「在应用管理里把 Obsidian 挪到『写作』组，放到第一位」 |
 | 重命名分组（条目侧） | 逐条 `PATCH /api/items/{id}` `{group}` | 「把『工具』组里的条目全改名成『效率』」 |
 | 看某条命令的输出 | `GET /api/runs/{id}` | 「跑一下『整理下载』那条命令，把输出给我」 |
+| 重启正在跑的命令 | `POST /api/run` `{id,restart:true}` | 「重启 dsh 那条常驻命令」（**会杀掉正在跑的进程**，别拿不带 `restart` 的调用去试） |
+| 停掉正在跑的命令 | `POST /api/run` `{id,stop:true}` | 「那条常驻命令不跑了」（**会杀掉正在跑的进程**；孤儿进程会 409，此时只能让用户自己在终端 `kill`） |
 | 置顶/取消置顶 | `PATCH /api/items/{id}` `{pinned}` | 「把 CI 那条置顶」 |
 | 删掉一个条目 | `DELETE /api/items/{id}` | 「面板里不要『周报』这条了（文件别动）」 |
 | 清理指向已卸载应用的配置 | **只能他在设置页点**（`/api/state` 的 `appsExist` 是判断依据） | 「设置里那个『已失效引用』清掉」 |
@@ -300,7 +304,8 @@ BASE=http://127.0.0.1:5399
 | 400 `这个应用不在「可用终端」清单里` | `app` 指名了清单外的应用。先 `PATCH /api/settings` 加进 `terminals`，或换清单内的 |
 | 400 `命令条目要用「运行」` | `command` 条目不能用 `/api/open`，要用 `/api/run` |
 | 400 `只允许 http/https` | `url` 用了别的协议 |
-| 409 `这条命令正在运行中` | 同一条命令还没退出。**这是保护，不是 bug**；要停请人来停 |
+| 409 `这条命令正在运行中` | 同一条命令还没退出。**这是保护，不是 bug**：不带 `restart` 的调用（卡片单击、⌘K Enter）撞的就是它；要重启走 `{id,restart:true}`（卡片右键「重新执行」/ 输出弹层那颗按钮） |
+| 409 `这条不是当前服务起的进程，停不掉` | `{id,stop:true}`（右键「停止运行」/ 输出弹层「停止」）只能停本服务亲手 spawn 的那个进程。面板/服务重启前起来的孤儿进程没有句柄，只能让他自己在终端 `kill` |
 | 404 `没有这条命令条目` | `/api/run`、`/api/runs/:id` 只认 `kind:'command'` 的 id |
 | 400 `kind 需为 folder/file` | `/api/pick` 不支持选应用；应用从 `/api/apps` 搜 |
 | 500 `打开系统选择器失败` | 无人点选/权限异常；`cancelled:true` 才是他主动取消 |

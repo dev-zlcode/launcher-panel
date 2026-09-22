@@ -86,6 +86,8 @@ interface CardProps {
   onMenu: (item: Item, pos: { x: number; y: number }) => void
   /** 命令面板定位到这张卡片时框一下，1.8s 后自己退掉。 */
   flash?: boolean
+  /** 命令条目的进程还在跑。标签只在名称后面活这段时间，跑完就没了，结果仍看输出弹层。 */
+  running?: boolean
 }
 
 /** MM-DD — the list view has room for a date, not for a timestamp. */
@@ -93,7 +95,7 @@ function lastUsed(iso: string) {
   return new Date(iso).toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' })
 }
 
-export function ItemCard({ item, layout, appsExist, openByKind, onActivate, onReveal, onMenu, flash }: CardProps) {
+export function ItemCard({ item, layout, appsExist, openByKind, onActivate, onReveal, onMenu, flash, running }: CardProps) {
   const meta = KIND_META[item.kind]
   const press = longPress((pos) => onMenu(item, pos))
   const exist = appsExist ?? {}
@@ -122,6 +124,14 @@ export function ItemCard({ item, layout, appsExist, openByKind, onActivate, onRe
           title="候选里有未安装的应用，打开时会自动跳过"
         >
           {dead.length} 失效
+        </span>
+      )}
+      {running && (
+        <span
+          className="shrink-0 animate-pulse rounded-full border border-info/40 px-[5px] text-[10px] leading-[14px] text-info"
+          title="进程还在跑；单击会报「这条命令正在运行中」，右键可以「重新执行」或「停止运行」，输出走「运行输出」"
+        >
+          运行中
         </span>
       )}
     </>

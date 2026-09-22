@@ -674,11 +674,36 @@ async function commandScript(item) {
  * Output goes to a file descriptor rather than a pipe: a resident command (`dsh web`) outlives the
  * request that started it, and a pipe breaks the moment this middleware reloads.
  */
+/**
+ * SIGTERM, then SIGKILL three seconds later if it ignored that. Only the child this process spawned is
+ * reachable — a run whose parent server got restarted leaves an orphan no one here can stop.
+ */
+function stopChild(child) {
+  return new Promise((resolve) => {
+    if (child.exitCode !== null || child.signalCode !== null) return resolve()
+    const timer = setTimeout(() => child.kill('SIGKILL'), 3000)
+    child.once('exit', () => {
+      clearTimeout(timer)
+      resolve()
+    })
+    child.kill('SIGTERM')
+  })
+}
+
 async function hRun(req, res) {
   const body = await readBody(req)
   const db = await loadDb()
   const item = db.items.find((i) => i.id === body.id && i.kind === 'command')
   if (!item) throw Object.assign(new Error('没有这条命令条目'), { status: 404 })
+  const live = liveRuns.get(item.id)
+  // 「停止运行」：only this process's own child is reachable, so an orphan from a restarted server
+  // answers with a clear 409 instead of pretending it stopped something.
+  if (body.stop) {
+    if (!live) throw Object.assign(new Error('这条不是当前服务起的进程，停不掉'), { status: 409 })
+    await stopChild(live.child)
+    json(res, 200, { ok: true, stopped: true })
+    return
+  }
   if (body.app) {
     const app = terminalApp(db, body.app)
     // Nothing to capture: the terminal owns the window, the output and how long it lives.
@@ -686,7 +711,12 @@ async function hRun(req, res) {
     json(res, 200, { ok: true, launched: app })
     return
   }
-  if (liveRuns.has(item.id)) throw Object.assign(new Error('这条命令正在运行中'), { status: 409 })
+  if (live) {
+    // `restart` is what the menu's 「重新执行」 sends; a plain run still 409s, so a stray click can't
+    // take down a resident service.
+    if (!body.restart) throw Object.assign(new Error('这条命令正在运行中'), { status: 409 })
+    await stopChild(live.child)
+  }
   await fs.mkdir(RUNS_DIR, { recursive: true })
   // Truncate: the log always holds exactly the run you are looking at.
   const fd = fsSync.openSync(logPathOf(item.id), 'w')

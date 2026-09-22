@@ -50,8 +50,13 @@ export const api = {
   /** `app` is a .app path from the terminal list; the server refuses anything not on it. */
   terminal: (value: string, app: string) => post<{ ok: true }>('/api/terminal', { value, app }),
   copy: (text: string) => post<{ ok: true }>('/api/copy', { text }),
-  /** Starts a stored `command` item in the background and returns at once; output goes to its log file. */
-  run: (id: string) => post<{ ok: true; started: true; command: string; log: string }>('/api/run', { id }),
+  /**
+   * Starts a stored `command` item in the background and returns at once; output goes to its log file.
+   * `restart` stops the run this server started first — without it a live run answers 409.
+   * `stop` only stops: no new run, and the log stays put.
+   */
+  run: (id: string, mode?: 'restart' | 'stop') =>
+    post<{ ok: true }>('/api/run', mode ? { id, [mode]: true } : { id }),
   /** Live tail of one command's run. Poll this while the output view is open. */
   runOutput: (id: string) => request<RunOutput>(`/api/runs/${id}`),
   /** The same item, but a terminal app owns the window, the output and how long it lives. */

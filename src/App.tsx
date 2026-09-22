@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api } from './api'
 import { scoreItem } from './fuzzy'
 import { applyTheme } from './theme'
-import type { Filter, Item, OpenByKind, PanelGroup, PanelSort, PanelView, RunMark } from './types'
+import type { Filter, Item, OpenByKind, PanelGroup, PanelSort, PanelView, RunMark, RunOutput } from './types'
 import { CommandPalette } from './components/CommandPalette'
 import { ContextMenu, type MenuEntry } from './components/ContextMenu'
 import { Discover } from './components/Discover'
@@ -259,19 +259,83 @@ export function App() {
   /**
    * No double-click wait and no app chooser: the command is the whole point. This starts the process
    * and returns — output streams into `data/runs/<id>.log`, and the toast is the door to watching it.
+   * `restart` stops the live run first; `stop` stops it and keeps the log for the output view.
    */
   const runCommand = useCallback(
-    async (item: Item) => {
+    async (item: Item, mode?: 'restart' | 'stop') => {
       try {
-        await api.run(item.id)
+        await api.run(item.id, mode)
+        if (mode === 'stop') {
+          setRuns((prev) => ({ ...prev, [item.id]: { running: false, code: null, at: prev[item.id]?.at ?? Date.now() } }))
+          push(`已停止「${item.name}」· 点这里看输出`, 'ok', () => setResultFor(item.id))
+          return
+        }
         setRuns((prev) => ({ ...prev, [item.id]: { running: true, code: null, at: Date.now() } }))
-        push(`已启动「${item.name}」· 点这里看实时输出`, 'ok', () => setResultFor(item.id))
+        push(`${mode === 'restart' ? '已重新执行' : '已启动'}「${item.name}」· 点这里看实时输出`, 'ok', () => setResultFor(item.id))
       } catch (err) {
         toastErr(err)
       }
     },
     [push, toastErr],
   )
+
+  /**
+   * Fold one /api/runs answer into the marks. Starting a run sets `running` from the click, but nothing
+   * ever cleared it — the process ends without telling the panel, so the exit answer is what turns
+   * the card tag off.
+   */
+  const recordRun = useCallback((id: string, r: RunOutput) => {
+    setRuns((prev) => {
+      if (r.running) {
+        if (prev[id]?.running) return prev
+        return { ...prev, [id]: { running: true, code: null, at: Date.parse(r.startedAt ?? '') || Date.now() } }
+      }
+      if (!prev[id]?.running) return prev
+      return { ...prev, [id]: { running: false, code: r.code, at: prev[id].at } }
+    })
+  }, [])
+
+  const commandKey = items
+    .filter((i) => i.kind === 'command')
+    .map((i) => i.id)
+    .join(',')
+
+  // First pass over every command: covers a resident run (`dsh web`) that started before this page loaded.
+  useEffect(() => {
+    let alive = true
+    for (const id of commandKey ? commandKey.split(',') : []) {
+      api
+        .runOutput(id)
+        .then((r) => alive && r.running && recordRun(id, r))
+        .catch(() => {})
+    }
+    return () => {
+      alive = false
+    }
+  }, [commandKey, recordRun])
+
+  const runningKey = Object.keys(runs)
+    .filter((id) => runs[id].running)
+    .join(',')
+
+  // Then only the live ones, and only until they answer "not running" — no timer while nothing runs.
+  useEffect(() => {
+    const ids = runningKey ? runningKey.split(',') : []
+    if (!ids.length) return
+    let alive = true
+    const timer = window.setInterval(() => {
+      for (const id of ids) {
+        api
+          .runOutput(id)
+          .then((r) => alive && recordRun(id, r))
+          .catch(() => {})
+      }
+    }, 1000)
+    return () => {
+      alive = false
+      window.clearInterval(timer)
+    }
+  }, [runningKey, recordRun])
 
   /**
    * The double-click chooser (and 「本次用其他应用打开」): the item's own candidates, then this kind's list,
@@ -476,7 +540,12 @@ export function App() {
   const menuFor = (item: Item): MenuEntry[] => {
     const entries: MenuEntry[] = []
     if (item.kind === 'snippet') entries.push({ label: '复制内容', onSelect: () => copy(item.value, '内容') })
-    else if (item.kind === 'command') entries.push({ label: '运行', onSelect: () => runCommand(item) })
+    else if (item.kind === 'command') {
+      // A live run gets 「重新执行」 instead: 「运行」 would come back 409, and the row would be a dead end.
+      const live = runs[item.id]?.running ?? false
+      entries.push({ label: live ? '重新执行' : '运行', onSelect: () => runCommand(item, live ? 'restart' : undefined) })
+      if (live) entries.push({ label: '停止运行', onSelect: () => runCommand(item, 'stop') })
+    }
     else entries.push({ label: '打开', onSelect: () => openDefault(item) })
     if (item.iconPath) {
       entries.push({ label: '在 Finder 显示', hint: '⌘click', hintKey: true, onSelect: () => reveal(item) })
@@ -651,6 +720,7 @@ export function App() {
                       onReveal={reveal}
                       onMenu={openItemMenu}
                       flash={flash?.id === item.id}
+                      running={runs[item.id]?.running ?? false}
                     />
                   ))}
                 </div>
@@ -724,7 +794,13 @@ export function App() {
         />
       )}
       {resultItem && (
-        <RunResult item={resultItem} onRerun={runCommand} onCopy={copy} onClose={() => setResultFor(null)} />
+        <RunResult
+          item={resultItem}
+          onRerun={(i) => runCommand(i, 'restart')}
+          onStop={(i) => runCommand(i, 'stop')}
+          onCopy={copy}
+          onClose={() => setResultFor(null)}
+        />
       )}
       {menu && <ContextMenu x={menu.x} y={menu.y} title={menu.title} entries={menu.entries} numbered={menu.numbered} onClose={() => setMenu(null)} />}
       <Toasts toasts={toasts} onDismiss={(id) => setToasts((t) => t.filter((x) => x.id !== id))} />
