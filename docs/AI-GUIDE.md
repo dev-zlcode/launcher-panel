@@ -8,6 +8,7 @@
 - 面板是**本机 Web 服务**，只绑 `127.0.0.1`，不对外网开放，**没有任何鉴权**。
 - 地址下文中记作 `BASE`：`npm run dev` 是 `http://127.0.0.1:5178`（`strictPort`，端口被占就直接失败）；`npm start` 是同一批 `/api/*`，默认也是 5178，可用 `PORT=5180` 覆盖。**动手前先确认你要连的是哪一个。**
 - 一切配置只有一个落点：`data/items.json`（外加 `data/icons/`、`data/runs/` 两个派生缓存目录）。`data/` 整个 git-ignore，里面是**这个人的真实路径和条目**。
+- 出厂默认（`server/api.mjs` 的 `COMMON_FOLDERS` / `COMMON_URLS` / `COMMON_APPS`）不只影响新库：`loadDb()` 启动时用 `syncSeeds()` 和 `items.json` 对账，`seed` 键存着上次同步的出厂值，据此判断某条种子被用户碰过没有。**改这三张表＝给所有已有配置下发**，规则（含"删过的不复活""没有快照的第一次不补建"）看 `syncSeeds` 的注释，别在这里复述。
 - 所有请求/响应都是 JSON。带 body 的方法要带 `-H 'content-type: application/json'`；body 不是合法 JSON 会 400 `invalid JSON body`。
 - 出错时返回 `{ "error": "中文或英文文案" }` + 对应状态码（400/404/409/500）。
 
@@ -310,6 +311,7 @@ BASE=http://127.0.0.1:5399
 | 400 `kind 需为 folder/file` | `/api/pick` 不支持选应用；应用从 `/api/apps` 搜 |
 | 500 `打开系统选择器失败` | 无人点选/权限异常；`cancelled:true` 才是他主动取消 |
 | 构建后的面板一片白，dev 却正常 | 十有八九是 `items.json` 被手写过、缺 `openWith`。`GET /api/state` 看条目字段是否齐全 |
+| 改了 `COMMON_*` 三张表里的出厂默认，面板没变 | 对账只在**服务启动**时跑一次（浏览器 ⌘R 不算）→ 重启那个进程。重启后还不动，说明这条被用户碰过（值或名字改过、或者已删），`syncSeeds` 故意不覆盖也不复活 |
 | 改 `settings` 里某个枚举没生效也没报错 | 未知值会**静默回落默认**（`view` 的叶子值就是这政策）。对照 §3.7 的枚举表拼 |
 | 改了 `server/api.mjs` 后扫描结果像丢了 | 正常：Vite 中间件与 dev server 同进程，**改这个文件会热重启并清空内存缓存** |
 

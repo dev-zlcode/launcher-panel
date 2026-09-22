@@ -13,6 +13,7 @@ npm run dev        # http://127.0.0.1:5178（strictPort，只绑 127.0.0.1）
 
 只能 macOS（`open` / `osascript` / `sips` / `plutil` / `pbcopy` / `mdls`），Node ≥ 20.19（Vite 7 的下限）。
 克隆下来 `data/` 是空的（整个目录 git-ignore），起服务时会自动写入种子条目——第一次跑别以为是坏掉了。
+想动这些出厂默认（改值、加一条）：直接改 `server/api.mjs` 里那三张 `COMMON_*` 表就行。服务启动时会拿它们和 `items.json` 的 `seed` 快照对账，只把**用户没碰过**的种子条目同步过去，改过值/改过名/删掉的都不动，所以不用叫用户手动配合。
 
 改完代码跑这四条，全绿再提：
 

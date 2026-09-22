@@ -154,8 +154,11 @@ PORT=5180 npm start # prod 服务端口可用 PORT 覆盖
 | `appLib` | 应用管理的分组与手动顺序（`{ groups: [{ name, apps }] }`） |
 | `view` | 两页的视图偏好：`{ panel: {group,sort,layout,collapsed}, manage: {group,sort,layout,collapsed} }`（`collapsed` = 侧栏收起，默认 `false`） |
 | `theme` | 外观三档：`system`（默认，跟 macOS 走）/ `dark` / `light`；开关在设置弹窗的「外观」卡里，两页共用一档 |
+| `seed` | 出厂默认的快照（`{ kind: { 名称: 上次同步的出厂值 } }`）。面板不读它，它只用来判断某条种子你到底碰没碰过 |
 
 派生缓存也在 `data/` 下：`icons/`（提取出的 .app 图标）、`runs/`（命令日志与 `.command`）。
+
+出厂默认写死在 `server/api.mjs` 的 `COMMON_FOLDERS` / `COMMON_URLS` / `COMMON_APPS` 三张表里，服务**启动时**拿它们和 `items.json` 对账：只有你没碰过的种子条目会跟着代码改（值还等于 `seed` 记的那次出厂值才动），改过值、改过名、删掉的一律不碰也不复活；有改动就在服务日志里逐条列出来。所以升级后重起一次服务，默认项自己就跟上了，不用你去面板里改。
 
 写配置的口子只有一个 `PATCH /api/settings`，接受任意子集，**按页/按字段合并**：只传 `view.panel.layout` 不会冲掉同页的 `group`/`sort`，也不会碰到 `manage`。未知值读侧回落默认、不抛错（手改坏 items.json 不能把面板弄挂）；只有契约违规才 400（容器不是对象、页名不是 `panel`/`manage`）。
 

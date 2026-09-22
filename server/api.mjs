@@ -36,8 +36,8 @@ const COMMON_FOLDERS = [
 ].filter(([, p]) => p)
 
 const COMMON_URLS = [
-  ['GitHub', 'https://github.com/'],
-  ['Gmail', 'https://mail.google.com'],
+  ['GitHub', 'https://www.github.com/'],
+  ['Google', 'https://www.google.com'],
 ]
 
 const COMMON_APPS = [
@@ -215,13 +215,67 @@ function settingsPayload(db) {
   }
 }
 
+/**
+ * 出厂默认的唯一一份清单。改这三张表＝给所有已有配置下发新值，怎么落地见 `syncSeeds`。
+ * `order` 沿用建库时的编号：前 4 个（四个常用目录）置顶。
+ */
+const SEED_TABLES = [
+  ['folder', COMMON_FOLDERS, 0],
+  ['url', COMMON_URLS, 100],
+  ['app', COMMON_APPS, 200],
+]
+
+function seedEntries() {
+  return SEED_TABLES.flatMap(([kind, list, offset]) => list.map(([name, value], i) => ({ kind, name, value, order: offset + i })))
+}
+
+/** 快照：{ kind: { 名称: 出厂值 } }。落进 items.json，用来判断某条用户到底碰没碰过。 */
+function seedSnapshot(entries) {
+  const snap = {}
+  for (const s of entries) (snap[s.kind] ??= {})[s.name] = s.value
+  return snap
+}
+
+/**
+ * 把代码里的出厂默认对账进已有配置，返回改动说明（空数组＝什么都没动）。
+ *
+ * - 名字还对得上且值就是上次那个出厂值 → 跟着代码走
+ * - 值对不上快照（用户自己改的）或名字被改过（不再算种子） → 不碰
+ * - 快照里有、条目却没了（用户删的） → 不复活
+ * - 代码里新增的默认 → 补建，同 kind 下已有同名或同值的就跳过
+ *
+ * 没有快照的老配置是唯一的例外：种子标签 + 原名是"没被改过"仅有的证据，所以第一次对账
+ * 直接按代码走。但那次**不补建**缺失的条目 —— 分不清是用户删掉的还是没同步过，宁可少建。
+ */
+function syncSeeds(db, entries = seedEntries()) {
+  const prev = db.seed
+  const hadSnapshot = !!prev
+  const shipped = prev ?? {}
+  const changed = []
+  for (const s of entries) {
+    const was = shipped[s.kind]?.[s.name]
+    const mine = db.items.find((i) => i.kind === s.kind && i.name === s.name && i.tags?.includes('种子'))
+    if (mine) {
+      if (mine.value !== s.value && (was === undefined || mine.value === was)) {
+        changed.push(`${s.kind}「${s.name}」${mine.value} → ${s.value}`)
+        mine.value = s.value
+        if (s.kind !== 'url') mine.iconPath = s.value
+      }
+      continue
+    }
+    if (was !== undefined || !hadSnapshot) continue
+    if (db.items.some((i) => i.kind === s.kind && (i.name === s.name || i.value === s.value))) continue
+    db.items.push(mkDiscovered(s.kind, s.name, s.value, s.order))
+    changed.push(`${s.kind}「${s.name}」新增 ${s.value}`)
+  }
+  db.seed = seedSnapshot(entries)
+  return changed
+}
+
 function defaultDb() {
-  const items = [
-    ...COMMON_FOLDERS.map(([name, p], i) => mkDiscovered('folder', name, p, i)),
-    ...COMMON_URLS.map(([name, u], i) => mkDiscovered('url', name, u, i + 100)),
-    ...COMMON_APPS.map(([name, p], i) => mkDiscovered('app', name, p, i + 200)),
-  ]
-  return { version: 1, theme: DEFAULT_THEME, items, tags: {}, openByKind: emptyOpenByKind(), terminals: [...DEFAULT_TERMINALS], discoverDirs: [...DEFAULT_DISCOVER_DIRS], appLib: { groups: [] }, view: readView() }
+  const entries = seedEntries()
+  const items = entries.map((s) => mkDiscovered(s.kind, s.name, s.value, s.order))
+  return { version: 1, theme: DEFAULT_THEME, items, tags: {}, openByKind: emptyOpenByKind(), terminals: [...DEFAULT_TERMINALS], discoverDirs: [...DEFAULT_DISCOVER_DIRS], appLib: { groups: [] }, view: readView(), seed: seedSnapshot(entries) }
 }
 
 function emptyOpenByKind() {
@@ -292,6 +346,13 @@ async function loadDb() {
       if (!Array.isArray(item.tags)) item.tags = []
     }
     dbCache = parsed
+    // 老配置第一次对账只落快照，也要写盘，否则下次又当成没快照重来
+    const hadSnapshot = !!parsed.seed
+    const shipped = syncSeeds(dbCache)
+    if (shipped.length || !hadSnapshot) {
+      await flushDb()
+      if (shipped.length) console.log('[launcher] 出厂默认已同步:\n' + shipped.map((c) => `  - ${c}`).join('\n'))
+    }
     return dbCache
   } catch (err) {
     if (err.code !== 'ENOENT') {
@@ -1260,4 +1321,4 @@ export async function handleApi(req, res) {
   json(res, 404, { error: `no route ${req.method} ${pathname}` })
 }
 
-export { ensureIcon, parseDisplayNameValue, alignDisplayNames, pickDisplayName, localizedNames, buildAppNameMap }
+export { ensureIcon, parseDisplayNameValue, alignDisplayNames, pickDisplayName, localizedNames, buildAppNameMap, syncSeeds, seedEntries }
