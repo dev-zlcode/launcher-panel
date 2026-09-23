@@ -73,6 +73,10 @@ export function AppManage() {
   /** Last checkbox click — Shift+click selects the span from here. */
   const anchor = useRef<string | null>(null)
 
+  /** 后台补中文名的重读：定时器，和已重读次数（`mdls` 一直失败也不至于轮询下去）。 */
+  const nameTimer = useRef(0)
+  const nameReread = useRef(0)
+
   const [newGroup, setNewGroup] = useState(false)
   const [renaming, setRenaming] = useState<string | null>(null)
   const [menu, setMenu] = useState<{ title: string; x: number; y: number; entries: MenuEntry[] } | null>(null)
@@ -121,7 +125,12 @@ export function AppManage() {
     return () => window.removeEventListener('keydown', onKey)
   }, [toggleNav])
 
-  const refresh = useCallback(async () => {
+  /**
+   * `namesOnly` is the background re-read: it takes the localized names and nothing else, so a GET
+   * that started before a drag and landed after it cannot roll that drag back.
+   */
+  const refresh = useCallback(async (namesOnly = false) => {
+    const mine = namesOnly ? seq.current : ++seq.current
     try {
       const data = await api.library()
       const zh: Record<string, string> = {}
@@ -130,14 +139,35 @@ export function AppManage() {
         if (a.displayName && a.displayName !== en) zh[a.value] = a.displayName
       }
       primeAppNames(zh)
-      setLib(data)
-      setLoadError(null)
+      if (namesOnly) {
+        setLib((prev) => (prev ? { ...prev, all: data.all, namesPending: data.namesPending } : prev))
+      } else if (mine === seq.current) {
+        setLib(data)
+        setLoadError(null)
+      }
+      // 中文名由服务器后台补（mdls 不挡首屏）：还欠着就隔一会儿再读一次，卡片会自己换成中文名。
+      // Capped, because a page left open can otherwise poll a broken `mdls` forever.
+      if (data.namesPending && nameReread.current < 3 && !nameTimer.current) {
+        nameReread.current += 1
+        nameTimer.current = window.setTimeout(() => {
+          nameTimer.current = 0
+          void refresh(true)
+        }, 1500)
+      }
     } catch (err) {
-      setLoadError(String((err as Error).message))
+      // A failed re-read costs nothing but the names; the table on screen is still good.
+      if (!namesOnly) setLoadError(String((err as Error).message))
     } finally {
       setLoading(false)
     }
   }, [])
+
+  useEffect(
+    () => () => {
+      window.clearTimeout(nameTimer.current)
+    },
+    [],
+  )
 
   useEffect(() => {
     refresh()
@@ -681,7 +711,7 @@ export function AppManage() {
           {loadError && (
             <div className="mt-10 rounded-xl border border-danger/40 bg-danger/10 p-4 text-[13px] text-danger">
               无法连接本地服务：{loadError}
-              <button type="button" onClick={refresh} className="ml-3 rounded-lg border border-danger/40 px-2 py-0.5 text-[12px] hover:bg-danger/20">
+              <button type="button" onClick={() => refresh()} className="ml-3 rounded-lg border border-danger/40 px-2 py-0.5 text-[12px] hover:bg-danger/20">
                 重试
               </button>
             </div>

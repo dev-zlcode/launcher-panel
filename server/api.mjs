@@ -507,7 +507,7 @@ async function hState(req, res) {
   const appsExist = Object.fromEntries(refs.map((app) => [app, fsSync.existsSync(expandHome(app))]))
   // Chain B labels (card default app, menus, badges, toasts, terminal rows) only ever see these paths;
   // resolving their localized names here lets the panel render Chinese on the first frame.
-  const appNames = buildAppNameMap(refs, await localizedNames(refs))
+  const appNames = buildAppNameMap(refs, await resolveDisplayNames(refs))
   json(res, 200, {
     items: db.items,
     tags: db.tags,
@@ -879,7 +879,8 @@ async function collectApps(dirs) {
     await walk(dir, 0)
   }
   const apps = [...found.values()].sort((a, b) => a.name.localeCompare(b.name))
-  const display = await localizedNames(apps.map((a) => a.value))
+  await ensureNameCache()
+  const display = peekDisplayNames(apps.map((a) => a.value))
   for (const a of apps) {
     const zh = pickDisplayName(a.name, display.get(a.value))
     if (zh) a.displayName = zh
@@ -913,26 +914,134 @@ function pickDisplayName(english, localized) {
 const MDLS_ARG = ['-name', 'kMDItemDisplayName']
 const MDLS_CHUNK = 60
 
-/** value → localized display name. Batched, chunk falls back to per-path on any misalignment. */
-async function localizedNames(paths, execMdls = (args) => run('mdls', args)) {
+/** One mdls batch, falling back to per-path when the batch drops any path (unindexed bundles). */
+async function localizedChunk(chunk, execMdls) {
   const out = new Map()
-  for (let i = 0; i < paths.length; i += MDLS_CHUNK) {
-    const chunk = paths.slice(i, i + MDLS_CHUNK)
-    let aligned = null
-    const stdout = await execMdls([...MDLS_ARG, ...chunk]).catch(() => null)
-    if (stdout != null) {
-      const values = stdout.split('\n').filter(Boolean).map(parseDisplayNameValue)
-      if (values.length === chunk.length && values.every((v) => v)) aligned = alignDisplayNames(chunk, values)
+  let aligned = null
+  const stdout = await execMdls([...MDLS_ARG, ...chunk]).catch(() => null)
+  if (stdout != null) {
+    const values = stdout.split('\n').filter(Boolean).map(parseDisplayNameValue)
+    if (values.length === chunk.length && values.every((v) => v)) aligned = alignDisplayNames(chunk, values)
+  }
+  if (aligned) for (const [p, v] of aligned) out.set(p, v)
+  else
+    for (const p of chunk) {
+      const one = (await execMdls([...MDLS_ARG, p]).catch(() => null)) ?? ''
+      const v = parseDisplayNameValue(one.split('\n').filter(Boolean)[0] ?? '')
+      if (v) out.set(p, v)
     }
-    if (aligned) for (const [p, v] of aligned) out.set(p, v)
-    else
-      for (const p of chunk) {
-        const one = (await execMdls([...MDLS_ARG, p]).catch(() => null)) ?? ''
-        const v = parseDisplayNameValue(one.split('\n').filter(Boolean)[0] ?? '')
-        if (v) out.set(p, v)
-      }
+  return out
+}
+
+/** value → localized display name. Batches run concurrently; each falls back to per-path on misalignment. */
+async function localizedNames(paths, execMdls = (args) => run('mdls', args)) {
+  const chunks = []
+  for (let i = 0; i < paths.length; i += MDLS_CHUNK) chunks.push(paths.slice(i, i + MDLS_CHUNK))
+  const parts = await Promise.all(chunks.map((c) => localizedChunk(c, execMdls)))
+  return new Map(parts.flatMap((m) => [...m]))
+}
+
+/**
+ * path → `{ name, at }`. A bundle's localized name does not change under us, so every answer `mdls`
+ * ever gave lives here *and* in `data/app-names.json`: a cold start replays the file and spawns no
+ * `mdls` at all. An unindexed path stores null, which is what stops it from re-running the
+ * per-path fallback on every 30s scan. `at` ages an entry back into the queue because a system
+ * language switch is the one thing that renames a bundle in place.
+ * Paths only leave this table when the file is deleted — a few hundred short strings, and an
+ * uninstalled app coming back keeps its name.
+ */
+const displayNameMemo = new Map()
+const NAME_RECHECK_MS = 30 * 24 * 60 * 60_000
+const NAME_MISS_RECHECK_MS = 60 * 60_000
+const NAME_CACHE_FILE = path.join(DATA_DIR, 'app-names.json')
+
+/** Merge a persisted table into the memo; an unreadable or malformed file leaves it as-is. */
+async function loadNameCache(file = NAME_CACHE_FILE) {
+  let raw
+  try {
+    raw = JSON.parse(await fs.readFile(file, 'utf8'))
+  } catch {
+    return
+  }
+  if (!raw || typeof raw !== 'object') return
+  for (const [p, v] of Object.entries(raw)) {
+    if (v && typeof v === 'object' && (typeof v.name === 'string' || v.name === null)) {
+      displayNameMemo.set(p, { name: typeof v.name === 'string' ? v.name : null, at: Number(v.at) || 0 })
+    }
+  }
+}
+
+let nameCacheReady
+/** The scan answers from the memo, so the file has to be in it first. Loaded once per process. */
+function ensureNameCache() {
+  nameCacheReady ??= loadNameCache()
+  return nameCacheReady
+}
+
+let nameCacheSaving = Promise.resolve()
+/** Serialized like `flushDb`: two refreshes finishing at once must not interleave a half-written table. */
+function saveNameCache(file = NAME_CACHE_FILE) {
+  const snapshot = JSON.stringify(Object.fromEntries(displayNameMemo))
+  nameCacheSaving = nameCacheSaving
+    .then(async () => {
+      await fs.mkdir(DATA_DIR, { recursive: true })
+      const tmp = file + '.tmp'
+      await fs.writeFile(tmp, snapshot, 'utf8')
+      await fs.rename(tmp, file)
+    })
+    .catch((err) => console.error('[launcher] name cache save failed', err))
+  return nameCacheSaving
+}
+
+/** Localized names already known for these paths — no `mdls`, no waiting. */
+function peekDisplayNames(paths) {
+  const out = new Map()
+  for (const p of paths) {
+    const v = displayNameMemo.get(p)?.name
+    if (v) out.set(p, v)
   }
   return out
+}
+
+/** Never resolved, or resolved too long ago to trust: exactly what a refresh still owes. */
+function pendingNamePaths(paths, now = Date.now()) {
+  return paths.filter((p) => {
+    const e = displayNameMemo.get(p)
+    if (!e) return true
+    // A miss is usually a bundle Spotlight has not indexed yet (a just-installed app), so it comes
+    // back around much sooner than a name we actually got an answer for.
+    return now - e.at > (e.name ? NAME_RECHECK_MS : NAME_MISS_RECHECK_MS)
+  })
+}
+
+/** Resolve the pending ones and remember them; known paths cost nothing here. */
+async function refreshDisplayNames(paths, execMdls = (args) => run('mdls', args), file = NAME_CACHE_FILE) {
+  const pending = pendingNamePaths(paths)
+  if (!pending.length) return peekDisplayNames(paths)
+  let answered = false
+  const probe = async (args) => {
+    const out = await execMdls(args)
+    answered = true
+    return out
+  }
+  const fresh = await localizedNames(pending, probe)
+  // `localizedChunk` swallows exec errors by design, so a dead `mdls` looks exactly like "nothing
+  // indexed". Stamping that would freeze the whole grid into file names for a recheck window.
+  if (!answered) return peekDisplayNames(paths)
+  const at = Date.now()
+  for (const p of pending) displayNameMemo.set(p, { name: fresh.get(p) ?? null, at })
+  await saveNameCache(file)
+  return peekDisplayNames(paths)
+}
+
+/**
+ * The panel reads Chinese labels on its very first frame and only ever asks about the handful of
+ * apps its items reference, so that one call still waits for `mdls` — with the table on disk it
+ * normally waits for nothing.
+ */
+async function resolveDisplayNames(paths) {
+  await ensureNameCache()
+  return refreshDisplayNames(paths)
 }
 
 /** Path -> localized name, but only where it differs from the basename the panel would otherwise show. */
@@ -948,11 +1057,36 @@ function buildAppNameMap(paths, display) {
 
 let appsCache = { at: 0, list: [] }
 
+let nameRefresh
+/**
+ * 应用管理's grid does not wait on `mdls`: the scan answered with file names, so whatever is still
+ * unresolved resolves behind the request and patches the live cache in place. `namesPending` on the
+ * response is what tells the open page to read it back once.
+ *
+ * One pass at a time: a scan that lands while a pass is running has its new paths dropped, and they
+ * pick up a turn on the next scan (≤30s). `namesPending` reports them honestly meanwhile.
+ */
+function scheduleNameRefresh(paths) {
+  if (nameRefresh || !pendingNamePaths(paths).length) return
+  nameRefresh = refreshDisplayNames(paths)
+    .then((display) => {
+      for (const a of appsCache.list) {
+        const zh = pickDisplayName(a.name, display.get(a.value))
+        if (zh) a.displayName = zh
+      }
+    })
+    .catch((err) => console.warn('[launcher] name refresh failed', err.message))
+    .finally(() => {
+      nameRefresh = null
+    })
+}
+
 
 /** Cached against the configured dirs; hPatchSettings drops this when the list changes. */
 async function allApps() {
   if (Date.now() - appsCache.at > 30_000) {
     appsCache = { at: Date.now(), list: await collectApps((await loadDb()).discoverDirs) }
+    scheduleNameRefresh(appsCache.list.map((a) => a.value))
   }
   return appsCache.list
 }
@@ -1165,6 +1299,8 @@ async function buildLibrary(db) {
     groups,
     all: scanned,
     stale,
+    // Non-zero while the background `mdls` pass still owes names; the page re-reads once for 0.
+    namesPending: pendingNamePaths(scanned.map((a) => a.value)).length,
   }
 }
 
@@ -1321,4 +1457,17 @@ export async function handleApi(req, res) {
   json(res, 404, { error: `no route ${req.method} ${pathname}` })
 }
 
-export { ensureIcon, parseDisplayNameValue, alignDisplayNames, pickDisplayName, localizedNames, buildAppNameMap, syncSeeds, seedEntries }
+export {
+  ensureIcon,
+  parseDisplayNameValue,
+  alignDisplayNames,
+  pickDisplayName,
+  localizedNames,
+  peekDisplayNames,
+  pendingNamePaths,
+  refreshDisplayNames,
+  loadNameCache,
+  buildAppNameMap,
+  syncSeeds,
+  seedEntries,
+}

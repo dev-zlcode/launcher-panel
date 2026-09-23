@@ -60,6 +60,11 @@ export interface Library {
   all: AppEntry[]
   /** Stored paths currently not scanned; hidden but kept. */
   stale: number
+  /**
+   * Apps whose localized name the server is still resolving in the background (`mdls` never blocks
+   * this response). Non-zero means the cards right now show file names; re-read once for 0.
+   */
+  namesPending: number
 }
 
 /** Kinds you open *with* another app; each holds one ordered list, first entry = default. */

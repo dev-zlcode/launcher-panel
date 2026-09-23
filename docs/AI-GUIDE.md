@@ -204,6 +204,7 @@ curl -s $BASE/api/library | jq '{ungroupedName, autoGroupNames, groups:[.groups[
 - `ungroupedName` 恒为 `未分组`，它在 `groups` 里恰好出现一次；它的**成员是派生的**（扫到的减去别的组认领的），你存的那个数组只是它的手动顺序和这一行自身的位置。
 - `auto` 三个衍生组（`系统工具` / `Xcode 插件` / `Setapp`）在**第一次被写入存下时才固化**为普通组；`autoGroupNames` 是这三个名字，`autoAdd[名字]` 是「更新分组」会补进去的应用。
 - `stale`：存着但当前扫不到的应用数量（视图里不显示、**记录保留**）。
+- `namesPending`：还有几个应用的中文名在后台解析（`mdls` **不挡这个响应**）。非 0 时卡片先显示文件名，页面隔 1.5s 再读一次，**最多 3 次**（`mdls` 坏了不至于一直轮询）。中文名表落盘在 `data/app-names.json`，冷启动直接回放、不打 `mdls`；解析到的名字 30 天后重新进队列（改系统语言是唯一的原地改名场景），**未索引**的 1 小时后重试（刚装的 app 常常还没进 Spotlight），而 `mdls` 一次都没答话时**不写表**——失败不等于「这机器上没有这个名字」。
 - 响应里 `all`（以及 `groups[].apps`）可能有几百条绝对路径。**不要整份贴进对话或日志**，用 `jq` 只取你要改的那一组。
 - `PATCH /api/library` body 是 `{groups:[{name,apps}]}`，**整表替换**。校验很严，全过了才写：
 

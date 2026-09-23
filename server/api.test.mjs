@@ -1,6 +1,27 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { parseDisplayNameValue, alignDisplayNames, pickDisplayName, localizedNames, buildAppNameMap, syncSeeds } from './api.mjs'
+import fsp from 'node:fs/promises'
+import os from 'node:os'
+import nodePath from 'node:path'
+import {
+  parseDisplayNameValue,
+  alignDisplayNames,
+  pickDisplayName,
+  localizedNames,
+  peekDisplayNames,
+  pendingNamePaths,
+  refreshDisplayNames,
+  loadNameCache,
+  buildAppNameMap,
+  syncSeeds,
+} from './api.mjs'
+
+let tmpSeq = 0
+/** Each write test gets its own file, so the shared memo is the only thing under test. */
+const tmpName = async () => {
+  const dir = await fsp.mkdtemp(nodePath.join(os.tmpdir(), 'lp-names-'))
+  return nodePath.join(dir, `names-${tmpSeq++}.json`)
+}
 
 test('parseDisplayNameValue 取出引号内的中文名', () => {
   assert.equal(parseDisplayNameValue('kMDItemDisplayName = "预览"'), '预览')
@@ -64,6 +85,118 @@ test('localizedNames 批量有路径缺索引时逐条回退，命中的仍收',
   assert.equal(map.get('/a/Preview.app'), '预览')
   assert.equal(map.get('/a/Games.app'), '游戏')
   assert.equal(map.has('/a/Nope.app'), false)
+})
+
+test('refreshDisplayNames 按路径进程内 memo：第二轮一次 mdls 都不打', async () => {
+  let calls = 0
+  const exec = async (args) => {
+    calls += 1
+    return args.slice(2).map((p) => mdlsLine(`中-${p.split('/').pop()}`)).join('\n')
+  }
+  const paths = ['/memo/A.app', '/memo/B.app']
+  const first = await refreshDisplayNames(paths, exec, await tmpName())
+  assert.equal(calls, 1)
+  const second = await refreshDisplayNames(paths, exec, await tmpName())
+  assert.equal(calls, 1, 'memoized paths never re-query mdls')
+  assert.deepEqual([...second], [...first])
+  assert.deepEqual(peekDisplayNames(paths), second)
+})
+
+test('refreshDisplayNames 未索引的路径也记成 null，不会每轮重扫时逐条回退', async () => {
+  let single = 0
+  const exec = async (args) => {
+    if (args.length > 3) return mdlsLine('预览') // 3 个路径只回 1 行 → 触发逐条回退
+    if (args.at(-1) === '/miss/Preview.app') return mdlsLine('预览')
+    single += 1
+    return 'could not find /miss/Nope.app.'
+  }
+  const paths = ['/miss/Preview.app', '/miss/Nope.app', '/miss/Gone.app']
+  const first = await refreshDisplayNames(paths, exec, await tmpName())
+  assert.equal(first.get('/miss/Preview.app'), '预览')
+  assert.equal(first.has('/miss/Nope.app'), false)
+  assert.deepEqual(pendingNamePaths(paths), [], 'a resolved miss stays resolved')
+  const callsAfterFirst = single
+  const second = await refreshDisplayNames(paths, exec, await tmpName())
+  assert.equal(single, callsAfterFirst, 'the miss is memoized too, so no repeat per-path mdls')
+  assert.equal(second.get('/miss/Preview.app'), '预览')
+})
+
+test('refreshDisplayNames 跨批次（>60 个路径）仍按路径对齐', async () => {
+  const paths = Array.from({ length: 130 }, (_, i) => `/batch/App${i}.app`)
+  const exec = async (args) => args.slice(2).map((p) => mdlsLine(`名-${p.replace('.app', '').split('/').pop()}`)).join('\n')
+  const map = await refreshDisplayNames(paths, exec, await tmpName())
+  assert.equal(map.size, 130)
+  assert.equal(map.get('/batch/App0.app'), '名-App0')
+  assert.equal(map.get('/batch/App129.app'), '名-App129')
+})
+
+test('mdls 一次都没答话时不盖章：不算「这台机器上没有中文名」', async () => {
+  const file = await tmpName()
+  const paths = ['/broken/Preview.app', '/broken/Nope.app']
+  const exec = async () => {
+    throw new Error('spawn mdls ENOENT')
+  }
+  const map = await refreshDisplayNames(paths, exec, file)
+  assert.equal(map.size, 0)
+  assert.deepEqual(pendingNamePaths(paths), paths, '全部留在队列里，下一轮接着试')
+  await assert.rejects(fsp.access(file), '没有写盘，所以重启也不会把失败固化')
+})
+
+test('重查窗口：拿到名字按 30 天，未索引按 1 小时', async () => {
+  const file = await tmpName()
+  const paths = ['/ttl/Preview.app', '/ttl/NotIndexed.app']
+  await refreshDisplayNames(
+    paths,
+    async (args) => {
+      if (args.length > 3) return mdlsLine('预览') // 2 个路径只回 1 行 → 逐条回退
+      return args.at(-1) === '/ttl/Preview.app' ? mdlsLine('预览') : ''
+    },
+    file,
+  )
+  const hour = 60 * 60_000
+  const day = 24 * hour
+  assert.deepEqual(pendingNamePaths(paths, Date.now() + 30 * 60_000), [], '两个都还在各自窗口内')
+  assert.deepEqual(pendingNamePaths(paths, Date.now() + 2 * hour), ['/ttl/NotIndexed.app'], '刚装还没进 Spotlight 的，1 小时就回来')
+  assert.deepEqual(pendingNamePaths(paths, Date.now() + 31 * day), paths, '30 天后连有名字的一起重查')
+})
+
+test('冷启动从落盘表回放：已知路径不再进 pending，超龄的重新排队', async () => {
+  const file = await tmpName()
+  const fresh = Date.now()
+  const staleAt = fresh - 31 * 24 * 60 * 60_000
+  await fsp.writeFile(
+    file,
+    JSON.stringify({
+      '/disk/Preview.app': { name: '预览', at: fresh },
+      '/disk/Nope.app': { name: null, at: fresh },
+      '/disk/Old.app': { name: '旧名', at: staleAt },
+    }),
+    'utf8',
+  )
+  await loadNameCache(file)
+  assert.deepEqual(pendingNamePaths(['/disk/Preview.app', '/disk/Nope.app']), [])
+  assert.deepEqual(pendingNamePaths(['/disk/Old.app']), ['/disk/Old.app'], '超龄条目回到刷新队列')
+  const never = await fsp.mkdtemp(nodePath.join(os.tmpdir(), 'lp-names-'))
+  await loadNameCache(nodePath.join(never, 'missing.json'))
+  assert.equal(peekDisplayNames(['/disk/Preview.app']).get('/disk/Preview.app'), '预览', 'misses never overwrite a known name')
+})
+
+test('refreshDisplayNames 写盘：文件里就是 memo 的形状，回放后零 mdls', async () => {
+  const file = await tmpName()
+  const exec = async (args) => {
+    if (args.length > 3) return '' // 2 个路径 0 行 → 逐条回退
+    return args.at(-1) === '/save/Preview.app' ? mdlsLine('预览') : 'could not find /save/Nope.app.'
+  }
+  await refreshDisplayNames(['/save/Preview.app', '/save/Nope.app'], exec, file)
+  const saved = JSON.parse(await fsp.readFile(file, 'utf8'))
+  assert.equal(saved['/save/Preview.app'].name, '预览')
+  assert.equal(saved['/save/Nope.app'].name, null)
+  await fsp.writeFile(file, JSON.stringify({ '/replay/Preview.app': { name: '预览', at: Date.now() } }), 'utf8')
+  await loadNameCache(file)
+  const map = await refreshDisplayNames(['/replay/Preview.app'], async () => {
+    throw new Error('mdls should not run for a replayed path')
+  }, file)
+  assert.equal(map.get('/replay/Preview.app'), '预览')
 })
 
 test('buildAppNameMap 只收中文名与路径英文名不同的项', () => {
