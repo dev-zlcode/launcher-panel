@@ -20,6 +20,20 @@ export const api = {
   create: (draft: ItemDraft) => request<{ item: Item }>('/api/items', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(draft) }),
   update: (id: string, draft: Partial<ItemDraft>) => request<{ item: Item }>(`/api/items/${id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify(draft) }),
   remove: (id: string) => request<{ ok: true }>(`/api/items/${id}`, { method: 'DELETE' }),
+  /** Panel 分组清单，whole-table replace (same semantics as patchLibrary). Names the user created; an empty group is a real group. */
+  patchItemGroups: (groups: string[]) =>
+    request<{ itemGroups: string[] }>('/api/item-groups', {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ groups }),
+    }),
+  /** 标签清单，和 patchItemGroups 同一套整表替换语义；空标签也算一个真标签。 */
+  patchItemTags: (tags: string[]) =>
+    request<{ itemTags: string[] }>('/api/item-tags', {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ tags }),
+    }),
   use: (id: string) => request<{ item: Item }>(`/api/items/${id}/use`, { method: 'POST', body: '{}' }),
   open: (kind: Item['kind'], value: string, app?: string | null) => post<{ ok: true; usedApp: string | null }>('/api/open', { kind, value, app }),
   apps: () => request<{ apps: AppEntry[] }>('/api/apps'),

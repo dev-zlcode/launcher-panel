@@ -14,6 +14,9 @@ import {
   loadNameCache,
   buildAppNameMap,
   syncSeeds,
+  readNameList,
+  normalizeNameList,
+  mergeNames,
 } from './api.mjs'
 
 let tmpSeq = 0
@@ -303,4 +306,43 @@ test('连跑两次幂等：第二次零变更、零新增', () => {
   const again = syncSeeds(db, seeds())
   assert.deepEqual(again, [])
   assert.equal(db.items.length, 1)
+})
+
+/* --------------------- panel name lists (分组 / 标签) ---------------------- */
+
+test('readNameList 只修形状：非字符串/空串丢掉、去空格去重、超长截断', () => {
+  assert.deepEqual(readNameList([' 效率 ', '效率', '', '  ', 7, null, ['x'], '办公']), ['效率', '办公'])
+  assert.deepEqual(readNameList('效率'), [])
+  assert.deepEqual(readNameList(undefined), [])
+  assert.equal(readNameList(['一'.repeat(50)])[0].length, 40)
+})
+
+test('normalizeNameList 整表校验：去空格后算重名，空名/超长/非数组各 400，顺序保留', () => {
+  assert.deepEqual(normalizeNameList([' 效率 ', '办公'], '分组', 'groups'), ['效率', '办公'])
+  for (const [input, msg] of [
+    ['效率', '需要是分组名数组'],
+    [[''], '分组名不能为空'],
+    [['一'.repeat(41)], '分组名最长 40 字'],
+    [['效率', '效率 '], '已有分组「效率」'],
+  ]) {
+    assert.throws(() => normalizeNameList(input, '分组', 'groups'), (err) => err.status === 400 && err.message.includes(msg))
+  }
+})
+
+test('mergeNames：清单在前保住顺序，条目派生的按字母序补在后面且不重复', () => {
+  assert.deepEqual(mergeNames(['效率', '永远在'], ['办公', '永远在', '效率']), ['效率', '永远在', '办公'])
+  assert.deepEqual(mergeNames([], ['b', 'a', 'a']), ['a', 'b'])
+  assert.deepEqual(mergeNames(['效率'], []), ['效率'])
+})
+
+test('标签清单走同一套校验，只是文案换成标签', () => {
+  assert.deepEqual(normalizeNameList([' 待办 ', '归档'], '标签', 'tags'), ['待办', '归档'])
+  for (const [input, msg] of [
+    [null, 'tags 需要是标签名数组'],
+    [[''], '标签名不能为空'],
+    [['标'.repeat(41)], '标签名最长 40 字'],
+    [['待办', '待办'], '已有标签「待办」'],
+  ]) {
+    assert.throws(() => normalizeNameList(input, '标签', 'tags'), (err) => err.status === 400 && err.message.includes(msg))
+  }
 })

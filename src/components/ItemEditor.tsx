@@ -5,8 +5,12 @@ import { canPickApps, type ExistMap } from '../paths'
 import { AppChips } from './AppChips'
 import { AppList, filterApps, moveCursor, useInstalledApps, withStoredPaths } from './AppList'
 import { KIND_META } from './ItemCard'
+import { NamePicker } from './NamePicker'
 
 const KINDS: Kind[] = ['app', 'folder', 'file', 'url', 'snippet', 'command']
+
+/** 和服务端 normalizeItem 同一条：超出的截掉，界面上看到的就是要存下的。 */
+const MAX_TAGS = 24
 
 const VALUE_FIELD: Record<Kind, { label: string; placeholder: string }> = {
   app: { label: '应用', placeholder: '搜索已安装应用，或填 .app 路径' },
@@ -26,6 +30,9 @@ const CANDIDATE_HINT = [
 interface Props {
   editing: Item | null
   groups: string[]
+  tags: string[]
+  /** 新建时替掉写死的「默认」——在某个分组视图里点「新增」才带，侧栏「新建分组」不弹这里。 */
+  initialGroup?: string
   appsExist: ExistMap
   openByKind: OpenByKind
   onClose: () => void
@@ -33,8 +40,8 @@ interface Props {
   onError: (message: string) => void
 }
 
-function emptyDraft(): ItemDraft {
-  return { kind: 'app', name: '', nameEn: '', value: '', group: '默认', tags: [], note: '', pinned: false, openWith: [] }
+function emptyDraft(group?: string): ItemDraft {
+  return { kind: 'app', name: '', nameEn: '', value: '', group: group?.trim() || '默认', tags: [], note: '', pinned: false, openWith: [] }
 }
 
 function toDraft(item: Item): ItemDraft {
@@ -42,19 +49,23 @@ function toDraft(item: Item): ItemDraft {
   return { kind, name, nameEn: nameEn ?? '', value, group, tags, note, pinned, openWith }
 }
 
-export function ItemEditor({ editing, groups, appsExist, openByKind, onClose, onSaved, onError }: Props) {
-  const [draft, setDraft] = useState<ItemDraft>(() => (editing ? toDraft(editing) : emptyDraft()))
-  const [tagText, setTagText] = useState(() => (editing ? editing.tags.join(', ') : ''))
+/** 逗号/顿号都算分隔符，和以前手打那一串保持同一口径。 */
+const splitTags = (text: string) => text.split(/[,，]/).map((t) => t.trim()).filter(Boolean)
+
+export function ItemEditor({ editing, groups, tags, initialGroup, appsExist, openByKind, onClose, onSaved, onError }: Props) {
+  const [draft, setDraft] = useState<ItemDraft>(() => (editing ? toDraft(editing) : emptyDraft(initialGroup)))
+  /** Only what is typed and not yet a chip; committed tags live in `draft.tags` like every other field. */
+  const [tagText, setTagText] = useState('')
   const [busy, setBusy] = useState(false)
   const [appPick, setAppPick] = useState(false)
   const [appCursor, setAppCursor] = useState(0)
 
   useEffect(() => {
-    setDraft(editing ? toDraft(editing) : emptyDraft())
-    setTagText(editing ? editing.tags.join(', ') : '')
+    setDraft(editing ? toDraft(editing) : emptyDraft(initialGroup))
+    setTagText('')
     setAppPick(false)
     setAppCursor(0)
-  }, [editing])
+  }, [editing, initialGroup])
 
   const canPickApp = canPickApps(draft.kind)
   /** A command is a script and a snippet is pasted text: both lose their line breaks in an <input>. */
@@ -63,6 +74,14 @@ export function ItemEditor({ editing, groups, appsExist, openByKind, onClose, on
 
   const set = <K extends keyof ItemDraft>(key: K, value: ItemDraft[K]) =>
     setDraft((d) => ({ ...d, [key]: value }))
+
+  /** 去重 + 截到 24：候选点一下、手打敲回车、保存时收残留三条路都走这一个口子。 */
+  const addTags = (list: string[]) =>
+    setDraft((d) => {
+      const next = [...d.tags]
+      for (const t of list) if (t && !next.includes(t)) next.push(t)
+      return { ...d, tags: next.slice(0, MAX_TAGS) }
+    })
 
   /**
    * A new item follows its kind's list until the user edits it by hand — the same rule the server
@@ -114,9 +133,11 @@ export function ItemEditor({ editing, groups, appsExist, openByKind, onClose, on
 
   const save = async () => {
     if (busy) return
-    const tags = tagText.split(/[,，]/).map((t) => t.trim()).filter(Boolean)
+    // 没敲回车就点保存：输入框里剩的半截也算数。
+    const all = [...draft.tags]
+    for (const t of splitTags(tagText)) if (!all.includes(t)) all.push(t)
     // 不可选应用的类型不留隐藏候选：编辑器已经不显示这块了。
-    const payload = { ...draft, tags, openWith: canPickApp ? (draft.openWith ?? []) : [] }
+    const payload = { ...draft, tags: all.slice(0, MAX_TAGS), openWith: canPickApp ? (draft.openWith ?? []) : [] }
     if (!payload.value.trim()) {
       onError(`${VALUE_FIELD[draft.kind].label}不能为空`)
       return
@@ -268,20 +289,43 @@ export function ItemEditor({ editing, groups, appsExist, openByKind, onClose, on
             )}
           </label>
 
-          <div className="grid grid-cols-2 gap-3">
-            <label className="block">
+          <div className="grid grid-cols-2 gap-3 max-md:grid-cols-1">
+            <div>
               <span className="mb-1 block text-[11px] uppercase tracking-wider text-mute-400">分组</span>
-              <input className={field} list="group-options" value={draft.group} onChange={(e) => set('group', e.target.value)} />
-              <datalist id="group-options">
-                {groups.map((g) => (
-                  <option key={g} value={g} />
-                ))}
-              </datalist>
-            </label>
-            <label className="block">
+              <NamePicker
+                text={draft.group}
+                onText={(v) => set('group', v)}
+                options={groups}
+                value={[draft.group]}
+                multiple={false}
+                onPick={(g) => set('group', g)}
+                placeholder="选一个分组，或敲一个新名字"
+                createLabel="新建分组"
+              />
+              {/* 候选被输入过滤空了 = 他在起一个新组名，得说清楚，不然看着像"只能从列表里选"。 */}
+              {!!draft.group.trim() && !groups.includes(draft.group) && (
+                <span className="mt-1 block text-[10.5px] text-mute-400">「{draft.group.trim()}」是新分组，保存即创建</span>
+              )}
+              {!draft.group.trim() && <span className="mt-1 block text-[10.5px] text-mute-400">留空归入「默认」</span>}
+            </div>
+            <div>
               <span className="mb-1 block text-[11px] uppercase tracking-wider text-mute-400">标签</span>
-              <input className={field} value={tagText} placeholder="逗号分隔" onChange={(e) => setTagText(e.target.value)} />
-            </label>
+              <NamePicker
+                text={tagText}
+                onText={setTagText}
+                options={tags}
+                value={draft.tags}
+                multiple
+                onPick={(t) => {
+                  addTags([t])
+                  setTagText('')
+                }}
+                onRemove={(t) => set('tags', draft.tags.filter((x) => x !== t))}
+                placeholder="选标签，或敲一个新名字"
+                createLabel="新标签"
+                max={MAX_TAGS}
+              />
+            </div>
           </div>
 
           {canPickApp && (

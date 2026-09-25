@@ -55,6 +55,46 @@ function readDirList(list) {
   return [...new Set(out)]
 }
 
+/**
+ * Panel-side name lists the user explicitly created (`itemGroups`, `itemTags`). Unlike the free text on an
+ * item (`group` / `tags[]`, derived at read), these names exist on their own — an empty bucket is real and stored.
+ * Read-side repair only: a hand-edited junk entry is dropped, never thrown over.
+ */
+function readNameList(list) {
+  if (!Array.isArray(list)) return []
+  const out = list.map((v) => (typeof v === 'string' ? v.trim().slice(0, 40) : '')).filter(Boolean)
+  return [...new Set(out)]
+}
+
+/**
+ * Write-side guard, whole-list semantics (same as `PATCH /api/library`: the payload *is* the table).
+ * `word`/`key` only change the error wording, so 分组 and 标签 share one rule set.
+ */
+function normalizeNameList(input, word, key) {
+  const bad = (msg) => {
+    throw Object.assign(new Error(msg), { status: 400 })
+  }
+  if (!Array.isArray(input)) bad(`${key} 需要是${word}名数组`)
+  const names = new Set()
+  for (const v of input) {
+    const name = String(v ?? '').trim()
+    if (!name) bad(`${word}名不能为空`)
+    if (name.length > 40) bad(`${word}名最长 40 字`)
+    if (names.has(name)) bad(`已有${word}「${name}」`)
+    names.add(name)
+  }
+  return [...names]
+}
+
+/**
+ * One sidebar column: hand-created names keep their stored order up front, names that only exist on items
+ * are appended alphabetically. Both axes (分组 / 标签) read the same way.
+ */
+function mergeNames(stored, derived) {
+  const rest = [...new Set(derived)].filter((name) => !stored.includes(name)).sort()
+  return [...new Set([...stored, ...rest])]
+}
+
 /* -------------------------------- app library ------------------------------ */
 
 /** The catch-all bucket's name. It is virtual (derived at read time) so it can never be a stored group name. */
@@ -275,7 +315,7 @@ function syncSeeds(db, entries = seedEntries()) {
 function defaultDb() {
   const entries = seedEntries()
   const items = entries.map((s) => mkDiscovered(s.kind, s.name, s.value, s.order))
-  return { version: 1, theme: DEFAULT_THEME, items, tags: {}, openByKind: emptyOpenByKind(), terminals: [...DEFAULT_TERMINALS], discoverDirs: [...DEFAULT_DISCOVER_DIRS], appLib: { groups: [] }, view: readView(), seed: seedSnapshot(entries) }
+  return { version: 1, theme: DEFAULT_THEME, items, itemGroups: [], itemTags: [], openByKind: emptyOpenByKind(), terminals: [...DEFAULT_TERMINALS], discoverDirs: [...DEFAULT_DISCOVER_DIRS], appLib: { groups: [] }, view: readView(), seed: seedSnapshot(entries) }
 }
 
 function emptyOpenByKind() {
@@ -312,7 +352,8 @@ async function loadDb() {
     const raw = await fs.readFile(DB_FILE, 'utf8')
     const parsed = JSON.parse(raw)
     if (!Array.isArray(parsed.items)) throw new Error('bad shape')
-    parsed.tags ??= {}
+    // Retired: an early tag pool that nothing ever read. The real one is `itemTags` below.
+    delete parsed.tags
     // Shape only — a path whose app has since been uninstalled stays put so the UI can report it as 失效.
     const legacyPool = Array.isArray(parsed.apps) ? parsed.apps : []
     delete parsed.apps
@@ -329,6 +370,9 @@ async function loadDb() {
     // Absent means an older file. The default dirs are always on; the rest is the user's list.
     parsed.terminals = [...new Set([...readAppList(parsed.terminals), ...DEFAULT_TERMINALS])]
     parsed.discoverDirs = [...new Set([...readDirList(parsed.discoverDirs), ...DEFAULT_DISCOVER_DIRS])]
+    // Absent on an older file → no hand-created buckets; the sidebar lists stay purely derived.
+    parsed.itemGroups = readNameList(parsed.itemGroups)
+    parsed.itemTags = readNameList(parsed.itemTags)
     // Absent on an older file → empty library, i.e. every scanned app lands in 未分组.
     parsed.appLib = readAppLib(parsed.appLib)
     // Absent on an older file → the default view, i.e. what 「智能」 used to mean.
@@ -510,11 +554,13 @@ async function hState(req, res) {
   const appNames = buildAppNameMap(refs, await resolveDisplayNames(refs))
   json(res, 200, {
     items: db.items,
-    tags: db.tags,
     settings: settingsPayload(db),
     appsExist,
     appNames,
-    groups: [...new Set(db.items.map((i) => i.group))].sort(),
+    itemGroups: db.itemGroups,
+    itemTags: db.itemTags,
+    groups: mergeNames(db.itemGroups, db.items.map((i) => i.group)),
+    tags: mergeNames(db.itemTags, db.items.flatMap((i) => i.tags)),
   })
 }
 
@@ -594,6 +640,29 @@ async function hPatchItem(req, res, { id }) {
   Object.assign(existing, item)
   await flushDb()
   json(res, 200, { item })
+}
+
+/**
+ * 分组清单整表替换（语义同 `PATCH /api/library`，不是 settings 的按字段合并）。
+ * 存的是用户点名建过的分组：条目上的 `group` 仍然是自由文本、读时派生。
+ */
+async function hPatchItemGroups(req, res) {
+  const body = await readBody(req)
+  const db = await loadDb()
+  const itemGroups = normalizeNameList(body.groups, '分组', 'groups')
+  db.itemGroups = itemGroups
+  await flushDb()
+  json(res, 200, { itemGroups })
+}
+
+/** Same whole-table semantics as `/api/item-groups`; the pool only ever holds hand-created names. */
+async function hPatchItemTags(req, res) {
+  const body = await readBody(req)
+  const db = await loadDb()
+  const itemTags = normalizeNameList(body.tags, '标签', 'tags')
+  db.itemTags = itemTags
+  await flushDb()
+  json(res, 200, { itemTags })
 }
 
 async function hDeleteItem(req, res, { id }) {
@@ -1415,6 +1484,8 @@ const routes = [
   ['PATCH', /^\/api\/settings$/, hPatchSettings],
   ['POST', /^\/api\/items$/, hCreateItem],
   ['PATCH', /^\/api\/items\/([\w-]+)$/, hPatchItem],
+  ['PATCH', /^\/api\/item-groups$/, hPatchItemGroups],
+  ['PATCH', /^\/api\/item-tags$/, hPatchItemTags],
   ['DELETE', /^\/api\/items\/([\w-]+)$/, hDeleteItem],
   ['POST', /^\/api\/items\/([\w-]+)\/use$/, hUse],
   ['POST', /^\/api\/open$/, hOpen],
@@ -1470,4 +1541,7 @@ export {
   buildAppNameMap,
   syncSeeds,
   seedEntries,
+  readNameList,
+  normalizeNameList,
+  mergeNames,
 }

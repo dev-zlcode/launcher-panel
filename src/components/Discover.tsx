@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { api } from '../api'
 import type { DiscoverResult } from '../types'
 import { ItemIcon, type IconSubject } from './ItemCard'
+import { OptionChips } from './OptionChips'
 import { Icon } from './Icon'
 
 interface Props {
@@ -77,26 +78,25 @@ export function Discover({ groups, onClose, onImported, onError }: Props) {
           </span>
         </div>
 
-        <div className="flex items-center gap-2 border-b border-ink-700 px-5 py-3">
+        <div className="flex flex-wrap items-center gap-2 border-b border-ink-700 px-5 py-3">
           <input
             autoFocus
             value={q}
             onChange={(e) => setQ(e.target.value)}
             placeholder="过滤名称或路径…"
-            className="flex-1 rounded-lg border border-ink-600 bg-ink-900/70 px-2.5 py-1.5 text-[13px] focus:border-accent focus:outline-none"
+            className="min-w-40 flex-1 rounded-lg border border-ink-600 bg-ink-900/70 px-2.5 py-1.5 text-[13px] focus:border-accent focus:outline-none"
           />
           <span className="text-[11.5px] text-mute-400">收录到</span>
           <input
-            list="discover-groups"
             value={group}
             onChange={(e) => setGroup(e.target.value)}
-            className="w-28 rounded-lg border border-ink-600 bg-ink-900/70 px-2.5 py-1.5 text-[13px] focus:border-accent focus:outline-none"
+            placeholder="已有分组，或敲一个新名字"
+            className="w-40 rounded-lg border border-ink-600 bg-ink-900/70 px-2.5 py-1.5 text-[13px] focus:border-accent focus:outline-none"
           />
-          <datalist id="discover-groups">
-            {groups.map((g) => (
-              <option key={g} value={g} />
-            ))}
-          </datalist>
+          {/* 和新增条目同一口径：候选点一下就切过去，手打的新名字照样算新建。 */}
+          <div className="basis-full">
+            <OptionChips options={groups.filter((g) => g !== group)} onPick={(g) => setGroup(g)} />
+          </div>
         </div>
 
         <div className="min-h-0 flex-1 overflow-y-auto px-2 py-2">

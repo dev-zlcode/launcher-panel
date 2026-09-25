@@ -112,7 +112,13 @@ export type ThemePref = 'system' | 'dark' | 'light'
 
 export interface State {
   items: Item[]
+  /** 侧栏那一列：点名建过的清单在前（顺序即侧栏顺序），条目上派生出来的按字母序补在后面。 */
   groups: string[]
+  tags: string[]
+  /** 用户点名建过的分组（可以为空组）；`groups` 是它和条目上出现过的组名的并集。 */
+  itemGroups: string[]
+  /** 同一套规则的另一轴：点「新建标签」存下的标签名，空标签也算数。 */
+  itemTags: string[]
   settings: {
     theme: ThemePref
     openByKind: OpenByKind
@@ -136,6 +142,9 @@ export interface Filter {
   scope: 'smart' | 'group' | 'kind' | 'tag'
   value: string
 }
+
+/** 侧栏「一条名字一个桶」的两轴：右键改名/删除都按这两轴走。 */
+export type AxisKind = Extract<Filter['scope'], 'group' | 'tag'>
 
 export interface ItemDraft {
   kind: Kind

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api } from './api'
 import { scoreItem } from './fuzzy'
 import { applyTheme } from './theme'
-import type { Filter, Item, OpenByKind, PanelGroup, PanelSort, PanelView, RunMark, RunOutput } from './types'
+import type { AxisKind, Filter, Item, ItemDraft, OpenByKind, PanelGroup, PanelSort, PanelView, RunMark, RunOutput } from './types'
 import { CommandPalette } from './components/CommandPalette'
 import { ContextMenu, type MenuEntry } from './components/ContextMenu'
 import { Discover } from './components/Discover'
@@ -47,8 +47,16 @@ interface MenuState extends Pos {
   numbered?: boolean
 }
 
+/** 和服务端 `mergeNames` 同一口径：清单保住顺序，条目派生的按字母序跟在后面，不重复。 */
+function mergeNames(stored: string[], derived: string[]) {
+  const rest = [...new Set(derived)].filter((name) => !stored.includes(name)).sort((a, b) => a.localeCompare(b))
+  return [...new Set([...stored, ...rest])]
+}
+
 export function App() {
   const [items, setItems] = useState<Item[]>([])
+  const [storedGroups, setStoredGroups] = useState<string[]>([])
+  const [storedTags, setStoredTags] = useState<string[]>([])
   const [openByKind, setOpenByKind] = useState<OpenByKind>(EMPTY_OPEN)
   const [terminalList, setTerminalList] = useState<string[]>([])
   const [defaultTerminals, setDefaultTerminals] = useState<string[]>([])
@@ -69,9 +77,14 @@ export function App() {
 
   const [palette, setPalette] = useState(false)
   const [settings, setSettings] = useState(false)
-  const [editor, setEditor] = useState<{ open: boolean; editing: Item | null }>({ open: false, editing: null })
+  const [editor, setEditor] = useState<{ open: boolean; editing: Item | null; initialGroup?: string }>({
+    open: false,
+    editing: null,
+  })
   const [discover, setDiscover] = useState(false)
   const [menu, setMenu] = useState<MenuState | null>(null)
+  /** 侧栏里正在改名的那一行（分组或标签）；null = 没有行处于编辑态。 */
+  const [renaming, setRenaming] = useState<{ axis: AxisKind; name: string } | null>(null)
   const [picker, setPicker] = useState<Item | null>(null)
   /** Last run per command item, and which item's output is on screen. Memory only — nothing here is config. */
   const [runs, setRuns] = useState<Record<string, RunMark>>({})
@@ -94,6 +107,8 @@ export function App() {
       const s = await api.state()
       primeAppNames(s.appNames ?? {})
       setItems(s.items)
+      setStoredGroups(s.itemGroups ?? [])
+      setStoredTags(s.itemTags ?? [])
       setOpenByKind(s.settings.openByKind)
       setTerminalList(s.settings.terminals ?? [])
       setDefaultTerminals(s.settings.defaultTerminals ?? [])
@@ -127,7 +142,14 @@ export function App() {
   const modalOpen = useRef(false)
   modalOpen.current = palette || settings || editor.open || discover || picker !== null || resultFor !== null || drawer
 
-  const groups = useMemo(() => [...new Set(items.map((i) => i.group))].sort((a, b) => a.localeCompare(b)), [items])
+  /** 点过「新建分组/新建标签」的名字存服务端（空桶也算数），条目上出现过的名字继续派生，清单在前、派生的按字母序补在后面。 */
+  const groups = useMemo(() => mergeNames(storedGroups, items.map((i) => i.group)), [items, storedGroups])
+  const tags = useMemo(() => mergeNames(storedTags, items.flatMap((i) => i.tags)), [items, storedTags])
+
+  /** 在某个分组视图里点「新增」就不用再挑一次分组；侧栏按钮和 N 快捷键共用这一个入口。 */
+  const openNewEditor = useCallback(() => {
+    setEditor({ open: true, editing: null, initialGroup: filter.scope === 'group' ? filter.value : undefined })
+  }, [filter])
 
   const visible = useMemo(() => {
     let pool = items
@@ -235,13 +257,13 @@ export function App() {
         document.getElementById('filter-input')?.focus()
       } else if (!typing && (e.key === 'n' || e.key === 'N')) {
         e.preventDefault()
-        setEditor({ open: true, editing: null })
+        openNewEditor()
       }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
     // setAxis changes identity with every view field, so the handler never merges from a stale one.
-  }, [setAxis, toggleNav])
+  }, [setAxis, toggleNav, openNewEditor])
 
   const openWithApp = useCallback(
     async (item: Item, app: string | null) => {
@@ -506,16 +528,167 @@ export function App() {
     [push, toastErr],
   )
 
-  const togglePin = useCallback(
-    async (item: Item) => {
+  /**
+   * 改归属走 PATCH 的极小 payload（缺失字段服务端回退旧值），返回的就是那一条的新样子，
+   * 所以只换列表里这一项，不整表重读——重读会盖掉同一时间别的乐观写入。
+   */
+  const patchItem = useCallback(
+    async (item: Item, patch: Partial<ItemDraft>) => {
       try {
-        const r = await api.update(item.id, { pinned: !item.pinned })
+        const r = await api.update(item.id, patch)
         setItems((prev) => prev.map((i) => (i.id === item.id ? r.item : i)))
+        return r.item
       } catch (err) {
         toastErr(err)
+        return null
       }
     },
     [toastErr],
+  )
+
+  const togglePin = useCallback(
+    async (item: Item) => {
+      await patchItem(item, { pinned: !item.pinned })
+    },
+    [patchItem],
+  )
+
+  const moveGroup = useCallback(
+    async (item: Item, group: string) => {
+      if (group === item.group || !group.trim()) return
+      if (await patchItem(item, { group })) push(`已移到「${group}」`, 'ok')
+    },
+    [patchItem, push],
+  )
+
+  const setTags = useCallback((item: Item, tags: string[]) => patchItem(item, { tags }), [patchItem])
+
+  /**
+   * 和应用管理同一动作：提交即写盘，所以一个还没有条目的空桶也留得住；建完直接切进去看。
+   * 名字已存在时不报错也不给死胡同——切过去就行（条目派生出的名字同样算存在）。
+   */
+  const createAxis = useCallback(
+    async (axis: AxisKind, raw: string) => {
+      const name = raw.trim()
+      if (!name) return
+      const word = axis === 'group' ? '分组' : '标签'
+      const pool = axis === 'group' ? storedGroups : storedTags
+      if ((axis === 'group' ? groups : tags).includes(name)) push(`已有${word}「${name}」`, 'info')
+      else {
+        try {
+          if (axis === 'group') setStoredGroups((await api.patchItemGroups([...pool, name])).itemGroups)
+          else setStoredTags((await api.patchItemTags([...pool, name])).itemTags)
+          push(`已新建${word}「${name}」`, 'ok')
+        } catch (err) {
+          return toastErr(err)
+        }
+      }
+      setFilter({ scope: axis, value: name })
+      setDrawer(false)
+    },
+    [storedGroups, storedTags, groups, tags, push, toastErr],
+  )
+
+  /** 清单那一层（`itemGroups` / `itemTags`）的整表写回，两轴同一条路。 */
+  const patchPool = useCallback(async (axis: AxisKind, next: string[]) => {
+    if (axis === 'group') setStoredGroups((await api.patchItemGroups(next)).itemGroups)
+    else setStoredTags((await api.patchItemTags(next)).itemTags)
+  }, [])
+
+  /** 某一轴下挂着多少条目。 */
+  const axisItems = useCallback(
+    (axis: AxisKind, name: string) => (axis === 'group' ? items.filter((i) => i.group === name) : items.filter((i) => i.tags.includes(name))),
+    [items],
+  )
+
+  /**
+   * 两轴的真源都是两处：清单里那一行（`itemGroups` / `itemTags`）和条目上的 `group` / `tags`。
+   * 所以改名一律先扫条目、再补清单那一行，两步走完才算改完。撞名（另一轴同名的组/标签各自算）
+   * 直接不改，一个请求都不发——静默合并等于替他决定条目该去哪。
+   * 中途失败不自动回滚（本地配置，最坏多一个空壳），但一定要 `refresh()` 让他看到真实状态。
+   */
+  const renameAxis = useCallback(
+    async (axis: AxisKind, from: string, raw: string) => {
+      setRenaming(null)
+      const to = raw.trim()
+      if (!to || to === from) return
+      if ((axis === 'group' ? groups : tags).includes(to)) return push(`已有${axis === 'group' ? '分组' : '标签'}「${to}」，没改`, 'info')
+      for (const item of axisItems(axis, from)) {
+        const patch: Partial<ItemDraft> = axis === 'group' ? { group: to } : { tags: item.tags.map((t) => (t === from ? to : t)) }
+        if (!(await patchItem(item, patch))) return refresh()
+      }
+      const pool = axis === 'group' ? storedGroups : storedTags
+      if (pool.includes(from)) {
+        try {
+          await patchPool(axis, pool.map((g) => (g === from ? to : g)))
+        } catch (err) {
+          toastErr(err)
+          return refresh()
+        }
+      }
+      if (filter.scope === axis && filter.value === from) setFilter({ scope: axis, value: to })
+      push(`已重命名「${from}」为「${to}」`, 'ok')
+    },
+    [items, groups, tags, storedGroups, storedTags, filter, axisItems, patchItem, patchPool, push, toastErr, refresh],
+  )
+
+  /**
+   * 删的是「桶」不是条目（红线：连移除条目都不碰磁盘）：分组解散后条目回「默认」，标签从条目上摘掉，
+   * 清单里那一行两轴都一起去掉。「默认」是兜底桶，删它等于把条目倒回自己，所以菜单里灰着。
+   */
+  const deleteAxis = useCallback(
+    async (axis: AxisKind, name: string) => {
+      const owned = axisItems(axis, name)
+      const word = axis === 'group' ? '分组' : '标签'
+      const effect =
+        axis === 'group'
+          ? owned.length
+            ? `组里 ${owned.length} 条回到「默认」`
+            : '这个组已经空了'
+          : owned.length
+            ? `从 ${owned.length} 条条目上摘掉`
+            : '这个标签还没挂上条目'
+      if (!window.confirm(`删除${word}「${name}」？\n${effect}。条目本身不会被删除，磁盘文件也不碰。`)) return
+      for (const item of owned) {
+        const patch: Partial<ItemDraft> = axis === 'group' ? { group: '默认' } : { tags: item.tags.filter((t) => t !== name) }
+        if (!(await patchItem(item, patch))) return refresh()
+      }
+      const pool = axis === 'group' ? storedGroups : storedTags
+      if (pool.includes(name)) {
+        try {
+          await patchPool(axis, pool.filter((g) => g !== name))
+        } catch (err) {
+          toastErr(err)
+          return refresh()
+        }
+      }
+      if (filter.scope === axis && filter.value === name) setFilter({ scope: 'smart', value: 'all' })
+      push(`已删除${word}「${name}」`, 'ok')
+    },
+    [storedGroups, storedTags, filter, axisItems, patchItem, patchPool, push, toastErr, refresh],
+  )
+
+  const axisMenu = useCallback(
+    (axis: AxisKind, name: string, pos: Pos) => {
+      const word = axis === 'group' ? '分组' : '标签'
+      const reserved = axis === 'group' && name === '默认'
+      setMenu({
+        title: name,
+        ...pos,
+        entries: [
+          { label: `重命名${word}`, onSelect: () => setRenaming({ axis, name }) },
+          {
+            label: `删除${word}`,
+            hint: reserved ? '兜底桶' : undefined,
+            disabled: reserved,
+            divider: true,
+            danger: true,
+            onSelect: () => deleteAxis(axis, name),
+          },
+        ],
+      })
+    },
+    [deleteAxis],
   )
 
   const remove = useCallback(
@@ -574,6 +747,22 @@ export function App() {
       })
     }
     entries.push({ label: item.pinned ? '取消置顶' : '置顶', onSelect: () => togglePin(item) })
+    // 归属直接给在菜单里：应用管理同一形态——所有分组平铺，一次点击即挪组，当前那行灰掉。
+    entries.push({ label: '移到分组', disabled: true, divider: true, onSelect: () => {} })
+    for (const g of groups) {
+      entries.push({
+        label: g,
+        hint: g === item.group ? '当前' : undefined,
+        disabled: g === item.group,
+        onSelect: () => moveGroup(item, g),
+      })
+    }
+    entries.push({ label: '标签', disabled: true, divider: true, onSelect: () => {} })
+    for (const t of tags) {
+      const on = item.tags.includes(t)
+      entries.push({ label: `# ${t}`, hint: on ? '已加' : undefined, onSelect: () => setTags(item, on ? item.tags.filter((x) => x !== t) : [...item.tags, t]) })
+    }
+    // 标签只能开关已有的：这里平铺的是侧栏那份（点「新建标签」存的 ∪ 条目派生），所以空标签也挑得到。
     entries.push({ label: '编辑…', onSelect: () => setEditor({ open: true, editing: item }) })
     entries.push({ label: '移除', danger: true, onSelect: () => remove(item) })
     return entries
@@ -593,15 +782,21 @@ export function App() {
   const nav = (
     <Sidebar
       items={items}
+      groups={groups}
+      tags={tags}
       filter={filter}
       onPick={(f) => {
         setFilter(f)
         setDrawer(false)
       }}
       onAdd={() => {
-        setEditor({ open: true, editing: null })
+        openNewEditor()
         setDrawer(false)
       }}
+      onCreateAxis={createAxis}
+      renaming={renaming}
+      onAxisMenu={axisMenu}
+      onRenameAxis={renameAxis}
       onDiscover={() => {
         setDiscover(true)
         setDrawer(false)
@@ -686,11 +881,17 @@ export function App() {
             <div className="mt-16 text-center">
               <div className="text-[15px] text-mute-300">这个视图是空的</div>
               <div className="mt-1 text-[12.5px] text-mute-400">
-                {query ? '换个关键词，或按 ' : ''}
-                <button type="button" onClick={() => setDiscover(true)} className="text-accent-soft underline decoration-dotted">
-                  发现应用
-                </button>
-                {' '}一键批量收录本机 App
+                {filter.scope === 'group' ? (
+                  <>还没有条目在这个分组里——按 N 或点「新增」，分组栏已经填好「{filter.value}」</>
+                ) : (
+                  <>
+                    {query ? '换个关键词，或按 ' : ''}
+                    <button type="button" onClick={() => setDiscover(true)} className="text-accent-soft underline decoration-dotted">
+                      发现应用
+                    </button>
+                    {' '}一键批量收录本机 App
+                  </>
+                )}
               </div>
             </div>
           )}
@@ -742,6 +943,8 @@ export function App() {
         <ItemEditor
           editing={editor.editing}
           groups={groups}
+          tags={tags}
+          initialGroup={editor.initialGroup}
           appsExist={appsExist}
           openByKind={openByKind}
           onClose={() => setEditor({ open: false, editing: null })}

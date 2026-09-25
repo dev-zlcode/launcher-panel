@@ -18,7 +18,7 @@
 2. **未经明确许可，不要对他的 dev server（5178）发任何写请求，也不要 kill 它。** 那上面跑的是真实配置。要试请求就在 `/tmp` 起一份沙箱（见 §6）。只读的 `GET /api/state` 可以直接打。
 3. **改前先读。** 每次用 `GET /api/state` 拿现状（条目 id、当前 `settings`、`appsExist`），不要凭上文记忆或猜测拼 payload。
 4. **`POST /api/items` 时不要自己塞 `openWith`**：新建的条目会**自动**按该类型的清单种一份模板。要改候选，事后走 `PATCH /api/items/:id`。
-5. **两个 PATCH 语义相反**，别混：`PATCH /api/settings` 是**按字段/按页合并**（只传 `view.panel.layout` 不会碰到 `group`，也不会碰到 `manage`）；`PATCH /api/library` 是**整表替换**（你没列出的应用等于被从分组里拿掉）。
+5. **两类 PATCH 语义相反**，别混：`PATCH /api/settings` 和 `PATCH /api/items/:id` 是**按字段合并**（只传 `view.panel.layout` 不会碰到 `group`，也不会碰到 `manage`；条目只传 `{group}` 不动其它字段）；`PATCH /api/library`、`PATCH /api/item-groups` 和 `PATCH /api/item-tags` 是**整表替换**（你没列出的应用/组名/标签名等于被拿掉，所以写前必须先读全量）。
 6. **「移除」不碰磁盘。** `DELETE /api/items/:id` 只删面板里那条记录。永远不要为了"清理"去 `rm`、`mv` 他机器上的文件或 `.app`。
 7. **不要把 `data/` 的内容贴进对话、日志或提交。** 需要示例时用假路径（`/Applications/Example.app`、`~/Documents/example`）。
 8. **说"做好"之前自己验一遍**：把 `GET /api/state` 读回来对照你声称改掉的字段。不通过就直说不通过。
@@ -61,7 +61,7 @@
 | `value` | string | 你 | 必填。`app`/`folder`/`file` 会被 `path.resolve` 成绝对路径，其余原样存 |
 | `iconPath` | string\|null | 服务端 | 派生：有本地路径的三类＝`value`，其余＝`null`。**不要发这个字段** |
 | `group` | string | 你 | 默认 `默认`。**传空串＝落回 `默认`，不是"保持原值"** |
-| `tags` | string[] | 你 | 去重后**最多 24 个**。传 `[]` 是真的清空。没有独立标签池，侧栏标签轴是从条目反推的 |
+| `tags` | string[] | 你 | 去重后**最多 24 个**。传 `[]` 是真的清空。条目自己只是一串自由文本；侧栏那一列另有清单，见 §3.10 |
 | `pinned` | boolean | 你 | 只有真布尔值会覆盖，其他值＝保持原值 |
 | `note` | string | 你 | **最长 2000 字**，超出静默截断 |
 | `openWith` | string[] | 你 | 该条目自己的候选，**最多 12 项**，每一项必须以 `.app` 结尾（否则 400 `候选应用必须指向 .app`）。语义见 §4 |
@@ -76,11 +76,12 @@
 curl -s $BASE/api/state | jq '{n:(.items|length), groups, settings}'
 ```
 
-返回 `{ items, tags, settings, appsExist, groups }`：
+返回 `{ items, settings, appsExist, appNames, itemGroups, itemTags, groups, tags }`：
 
 - `settings` = `{ theme, openByKind, terminals, defaultTerminals, discoverDirs, defaultDiscoverDirs, view }`。
 - **`appsExist` 是唯一可信的"这个应用还在不在"来源**（服务端对每个被引用的 `.app` 路径 `existsSync`）。**没出现在 map 里的路径按"已安装"处理。** 别拿 `/api/apps` 的扫描列表去判断未安装——那个列表只覆盖 `discoverDirs` 底下扫得到的。
-- `groups` = 条目上出现过的分组名，去重排序。
+- **两轴同构**：`itemGroups` / `itemTags` = 他点过「新建分组」/「新建标签」存下来的名字（**允许空桶**——还没有条目的桶照样列在侧栏）；`groups` / `tags` = 那份清单 ∪ 条目上出现过的名字，顺序是**清单在前保住存进来的顺序、派生的按字母序补在后面**（服务端 `mergeNames`，前端 `App.tsx` 同名函数同一口径）。写清单走 §3.10，**只有这一条路**能让一个还没有条目的桶存在；条目自己仍然只是自由文本 `group` / `tags[]`——清单不会替你改条目。
+- 顶层那个早期 `tags` 对象没人读过，**读档时直接 `delete`**，下次落盘就没了；标签清单的真名是 `itemTags`。
 
 ### 3.2 新增条目 `POST /api/items` → `{ item }`
 
@@ -125,6 +126,8 @@ curl -s -X PATCH $BASE/api/items/$ID -H 'content-type: application/json' \
 ```
 
 **PATCH 永远不会给你套类型模板**（只有 POST 会）。想让某个条目不再跟随设置页的类型清单，就得显式写它的 `openWith`。
+
+**面板改归属用的就是这份极小 payload**：`{group}` / `{tags}` / `{pinned}` 单独发都行（缺失字段回退旧值），返回体只有 `{ item }`，所以前端等回来后**只替换列表里那一条**（`App.tsx` 的 `patchItem`，形状同 `togglePin`），**不整表重读**——重读会把同一时间别的乐观写入盖掉。加这类交互不需要新接口。
 
 ### 3.4 删条目 `DELETE /api/items/{id}` → `{ ok: true }`
 
@@ -227,6 +230,25 @@ curl -s $BASE/api/library | jq '{ungroupedName, autoGroupNames, groups:[.groups[
 - `POST /api/pick` `{kind:'folder'｜'file'}` → 弹 macOS 原生选择器，**会阻塞到人选完或 120s 超时**；返回 `{cancelled, value, kind, name}`。`kind:'app'` 不支持（400 `kind 需为 folder/file`）——原生应用选择器要先过 Apple Events 授权且授权后仍会报错，应用一律从 `/api/apps` 里搜。
 - `GET /api/enrich?path=<绝对路径>` → `{iconUrl}`：确保图标已渲染。`GET /api/icon?hash=<64 位十六进制>` 取那张 png（不是这个形状 400 `bad hash`，没这个文件 404 `no icon`）。图标只在服务端算得出来（`osascript -l JavaScript` + `sips`），**不要试图自己生成**。
 
+### 3.10 面板两份名字清单 `PATCH /api/item-groups` → `{ itemGroups }` / `PATCH /api/item-tags` → `{ itemTags }`
+
+两轴**完全同构**：`groups`（侧栏那一列）＝**清单 ∪ 条目上出现过的 `group`**，`tags` ＝**清单 ∪ 条目上的 `tags`**。清单里存的是他点过「新建分组」/「新建标签」的名字，**允许空桶**——一个还没有条目的桶照样列在侧栏、照样能在卡片右键/编辑器里挑中；只在条目上出现过的名字是派生的，最后一条挪走/摘掉就没了。
+
+```bash
+# 整表替换（语义同 /api/library，不是 settings 的按字段合并）：先读现有清单，再追加
+curl -s -X PATCH $BASE/api/item-groups -H 'content-type: application/json' \
+  -d '{"groups":["默认","效率","待整理"]}'
+curl -s -X PATCH $BASE/api/item-tags -H 'content-type: application/json' \
+  -d '{"tags":["待办","归档"]}'
+```
+
+- body 就一个 `groups` / `tags`：字符串数组，**存进来的顺序就是侧栏前段的顺序**（派生的按字母序跟在后面）。两轴共用 `normalizeNameList`，只有文案换词：`分组名不能为空` / `标签名不能为空`、`分组名最长 40 字` / `标签名最长 40 字`、`已有分组「X」` / `已有标签「X」`，外加 `groups 需要是分组名数组` / `tags 需要是标签名数组`。
+- `{"groups":[]}` / `{"tags":[]}` 合法：清掉所有点名建过的桶，条目上的名字仍然派生出来。
+- 侧栏两个「新建」按钮不碰别的接口：读 `state.itemGroups` / `state.itemTags`，写回 `[...清单, 新名字]`。**别把派生出的名字一并存进去**，那等于替他把每个桶都变成永久的。
+- 侧栏**分组行和标签行同一套**：右键（窄屏长按）出两条——`重命名{分组|标签}` / `删除{分组|标签}`（后者 `divider + danger`）。共用 `AxisKind = 'group' | 'tag'`（`src/types.ts`），一个 `renaming: {axis, name}` 状态、一个 `axisMenu`、一个 `createAxis`。
+- **改名是两步**，两轴都是，少一步就裂成「一个空壳 + 条目挂在别的名字下」：① 每条命中条目 `PATCH /api/items/:id`（分组发 `{group:新名}`，标签发整份 `{tags:[…替换后…]}`）；② 只有旧名在清单里才 `PATCH /api/item-{groups|tags}`，把那个位置换成新名、其余原样。派生出来的名字**不写进清单**（改完它还是派生的）。撞已存在的名字 → 前端提示「已有分组「X」，没改」/「已有标签「X」，没改」，一个请求都不发；中途某步失败 → toast + 重新 `GET /api/state`，不自动回滚（最坏多一个空壳，再改一次即可）。原地输入框：Enter/点别处提交、Esc 取消。
+- **删除＝解散，永远不碰 `DELETE /api/items/:id`，也不碰磁盘**：删分组把组里条目逐条 `PATCH … {group:"默认"}`，删标签把 `tags` 里那一枚摘掉；两轴最后都从各自清单去掉那个名字。动手前 `window.confirm` 一次，文案讲清后果（`组里 N 条回到「默认」` / `这个组已经空了` / `从 N 条条目上摘掉` / `这个标签还没挂上条目` + `条目本身不会被删除，磁盘文件也不碰`），取消就一个请求都不发；**改名不弹**。`默认` 是兜底桶，它的删除那条 `disabled`、hint 写 `兜底桶`。
+
 ## 4. 打开方式的解析链：五处界面看的是同一份
 
 这是他反复强调的口径——**"逻辑和其他的一样，不再搞不一样的逻辑"**。任何一处少看一层，他都当 bug。
@@ -272,7 +294,14 @@ curl -s $BASE/api/library | jq '{ungroupedName, autoGroupNames, groups:[.groups[
 | 切浅色/深色/跟系统 | `PATCH /api/settings` `{theme}` | 「面板切成浅色」 |
 | 加扫描目录 | `PATCH /api/settings` `{discoverDirs:[…]}`（默认三个恒在） | 「把 `~/Applications/Setapp` 也算进扫描范围」 |
 | 应用管理：把某 App 挪进某组 | `GET /api/library` → 改数组 → `PATCH /api/library`（**整表替换**） | 「在应用管理里把 Obsidian 挪到『写作』组，放到第一位」 |
-| 重命名分组（条目侧） | 逐条 `PATCH /api/items/{id}` `{group}` | 「把『工具』组里的条目全改名成『效率』」 |
+| 新建一个分组（可以还没有条目） | `GET /api/state` 取 `itemGroups` → `PATCH /api/item-groups` `{groups:[...旧, 新]}` | 「新建一个『待整理』分组」 |
+| 新建一个标签（可以还没挂上条目） | `GET /api/state` 取 `itemTags` → `PATCH /api/item-tags` `{tags:[...旧, 新]}` | 「新建一个『待办』标签」 |
+| 把条目挪到另一分组 | `PATCH /api/items/{id}` `{group}` → `{ item }`（面板卡片右键「移到分组」即此，当前那组灰掉标「当前」） | 「把『周报』挪到『归档』组」 |
+| 给条目加/去一个标签 | `PATCH` `{tags:[…]}`（**整份替换**，前端把增删后的数组发回来；≤24） | 「给『CI』加上『待办』标签」 |
+| 重命名一个分组（侧栏右键） | **两步**：该组每条 `PATCH /api/items/{id}` `{group:新名}`；旧名在 `itemGroups` 里才 `PATCH /api/item-groups` 整表换掉那一项 | 「把『工具』组改名成『效率』」 |
+| 重命名一个标签（侧栏右键） | **两步**：每条命中条目 `PATCH /api/items/{id}` 发整份替换后的 `tags`；旧名在 `itemTags` 里才 `PATCH /api/item-tags` 整表换掉那一项 | 「把标签『工作』改成『主业』」 |
+| 删除分组（侧栏右键，先 `window.confirm`） | 组里每条 `PATCH /api/items/{id}` `{group:"默认"}`（解散，**不 `DELETE`**）；名字在 `itemGroups` 里才 `PATCH /api/item-groups` 整表去掉那一项。`默认` 那条不给删 | 「删掉『工具』组」（= 里面的条目回「默认」，条目不删） |
+| 删除标签（侧栏右键，先 `window.confirm`） | 每条命中条目 `PATCH /api/items/{id}`，发摘掉这一枚后的 `tags`；条目保留 | 「把标签『临时』去掉」 |
 | 看某条命令的输出 | `GET /api/runs/{id}` | 「跑一下『整理下载』那条命令，把输出给我」 |
 | 重启正在跑的命令 | `POST /api/run` `{id,restart:true}` | 「重启 dsh 那条常驻命令」（**会杀掉正在跑的进程**，别拿不带 `restart` 的调用去试） |
 | 停掉正在跑的命令 | `POST /api/run` `{id,stop:true}` | 「那条常驻命令不跑了」（**会杀掉正在跑的进程**；孤儿进程会 409，此时只能让用户自己在终端 `kill`） |
@@ -311,6 +340,8 @@ BASE=http://127.0.0.1:5399
 | 404 `没有这条命令条目` | `/api/run`、`/api/runs/:id` 只认 `kind:'command'` 的 id |
 | 400 `kind 需为 folder/file` | `/api/pick` 不支持选应用；应用从 `/api/apps` 搜 |
 | 500 `打开系统选择器失败` | 无人点选/权限异常；`cancelled:true` 才是他主动取消 |
+| 400 `groups 需要是分组名数组` / `tags 需要是标签名数组` | `PATCH /api/item-groups` 的 `groups`、`PATCH /api/item-tags` 的 `tags` 给了字符串或对象；它们要的都是**字符串数组**（`{name, apps}` 那一套是 `/api/library`） |
+| 刚建的分组/标签刷新后没了 | 两份清单都是**整表替换**（§3.10）：追加时漏带原有名字＝把它们删了。先读 `state.itemGroups` / `state.itemTags` 再写回 |
 | 构建后的面板一片白，dev 却正常 | 十有八九是 `items.json` 被手写过、缺 `openWith`。`GET /api/state` 看条目字段是否齐全 |
 | 改了 `COMMON_*` 三张表里的出厂默认，面板没变 | 对账只在**服务启动**时跑一次（浏览器 ⌘R 不算）→ 重启那个进程。重启后还不动，说明这条被用户碰过（值或名字改过、或者已删），`syncSeeds` 故意不覆盖也不复活 |
 | 改 `settings` 里某个枚举没生效也没报错 | 未知值会**静默回落默认**（`view` 的叶子值就是这政策）。对照 §3.7 的枚举表拼 |
@@ -322,8 +353,8 @@ BASE=http://127.0.0.1:5399
 | --- | --- | --- |
 | 条目 | `items.json` 里的一条记录，六类之一 | 收藏、快捷方式、书签 |
 | 应用 | `/Applications` 等处的 `.app` | 软件、程序（写接口时尤其） |
-| 分组 | 一个条目一个 `group`，自由文本 | 分类、目录、工作区 |
-| 标签 | 条目的 `tags[]`，多对多 | 标记、tag 分类 |
+| 分组 | 条目上的自由文本 `group`；侧栏那份清单＝`itemGroups`（点「新建分组」存的，允许空组）∪ 条目派生 | 分类、目录、工作区 |
+| 标签 | 条目的 `tags[]`，多对多；侧栏那份清单＝`itemTags`（点「新建标签」存的，允许空标签）∪ 条目派生 | 标记、tag 分类 |
 | 视图三轴 | 分组方式 / 排序方式 / 视图（宫格·列表） | 布局设置、显示选项 |
 | 默认顺序 | `sort:'manual'`，即数组顺序 | **手动顺序** |
 | 候选 · 有效清单 | 条目的 `openWith` 与该类型清单合并后的东西 | 推荐列表、备用应用 |
