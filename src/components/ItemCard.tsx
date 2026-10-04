@@ -1,4 +1,4 @@
-import { useRef } from 'react'
+import { useRef, useState } from 'react'
 import type { Item, Kind, Layout, OpenByKind } from '../types'
 import { colorFor, initials } from '../fuzzy'
 import { appInstalled, appNameOf, candidateApps, liveCandidates, ownApps, resolveDefaultApp, type ExistMap } from '../paths'
@@ -29,7 +29,7 @@ function faviconFor(url: string): string | null {
   }
 }
 
-export type IconSubject = Pick<Item, 'name' | 'value' | 'iconPath' | 'kind'>
+export type IconSubject = Pick<Item, 'name' | 'value' | 'iconPath' | 'kind'> & Partial<Pick<Item, 'iconUrl'>>
 
 export function ItemIcon({
   item,
@@ -43,9 +43,13 @@ export function ItemIcon({
 }) {
   const ref = useRef<HTMLSpanElement>(null)
   const seen = useInView(ref)
-  const fileIcon = useIcon(seen ? item.iconPath : null)
+  /** 保存时就算好的 png，直接拿来用，一帧都不等；它缺位（老条目、缓存被清）才去 enrich 现要。 */
+  const [failed, setFailed] = useState<string | null>(null)
+  const savedIcon = item.iconUrl && item.iconUrl !== failed ? item.iconUrl : null
+  const fileIcon = useIcon(seen && !savedIcon ? item.iconPath : null)
   const webIcon = item.kind === 'url' ? faviconFor(item.value) : null
-  const src = fileIcon ?? webIcon
+  /** 一档一档往下落：本地图标 → 链接的远端 favicon → 彩色首字母。失败的 src 记下来跳过，否则碎图就是一片空白，看着像图标被删了。 */
+  const src = [savedIcon, fileIcon, webIcon].find((u) => u && u !== failed) ?? null
 
   return (
     <span ref={ref} style={{ width: size, height: size }} className="relative grid shrink-0 place-items-center">
@@ -56,6 +60,7 @@ export function ItemIcon({
           width={size}
           height={size}
           draggable={false}
+          onError={() => setFailed(src)}
           className="select-none rounded-[22%] object-contain"
         />
       ) : (

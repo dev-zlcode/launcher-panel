@@ -553,7 +553,7 @@ async function hState(req, res) {
   // resolving their localized names here lets the panel render Chinese on the first frame.
   const appNames = buildAppNameMap(refs, await resolveDisplayNames(refs))
   json(res, 200, {
-    items: db.items,
+    items: db.items.map(withIconUrl),
     settings: settingsPayload(db),
     appsExist,
     appNames,
@@ -627,8 +627,10 @@ async function hCreateItem(req, res) {
     throw Object.assign(new Error('该项已存在'), { status: 409 })
   }
   db.items.push(item)
+  // 图标在保存这一刻算掉：卡片第一帧就有图，不用等渲染时现算（冷算一张 ~0.8s）。
+  if (item.iconPath) await ensureIcon(item.iconPath)
   await flushDb()
-  json(res, 200, { item })
+  json(res, 200, { item: withIconUrl(item) })
 }
 
 async function hPatchItem(req, res, { id }) {
@@ -638,8 +640,9 @@ async function hPatchItem(req, res, { id }) {
   const body = await readBody(req)
   const item = normalizeItem(body, existing)
   Object.assign(existing, item)
+  if (item.iconPath) await ensureIcon(item.iconPath)
   await flushDb()
-  json(res, 200, { item })
+  json(res, 200, { item: withIconUrl(item) })
 }
 
 /**
@@ -681,7 +684,7 @@ async function hUse(req, res, { id }) {
   item.useCount += 1
   item.lastUsedAt = new Date().toISOString()
   await flushDb()
-  json(res, 200, { item })
+  json(res, 200, { item: withIconUrl(item) })
 }
 
 /* --------------------------------- actions -------------------------------- */
@@ -1410,12 +1413,25 @@ async function hIcon(req, res) {
 
 const iconJobs = new Map()
 
-async function ensureIcon(targetPath) {
+/** 图标 png 的落点：按展开后的绝对路径取 sha256 命名。路径不存在或形状不对 → null。 */
+function iconFileOf(targetPath) {
   if (!isSafePath(targetPath)) return null
   const resolved = expandHome(targetPath)
   if (!resolved || !fsSync.existsSync(resolved)) return null
   const hash = createHash('sha256').update(resolved).digest('hex')
-  const file = path.join(ICON_DIR, `${hash}.png`)
+  return { resolved, hash, file: path.join(ICON_DIR, `${hash}.png`) }
+}
+
+/** 派生字段，不落 items.json：渲染过才带 URL，没带＝前端自己走 /api/enrich 现要一张。 */
+function withIconUrl(item) {
+  const target = item.iconPath && iconFileOf(item.iconPath)
+  return { ...item, iconUrl: target && fsSync.existsSync(target.file) ? `/api/icon?hash=${target.hash}` : null }
+}
+
+async function ensureIcon(targetPath) {
+  const target = iconFileOf(targetPath)
+  if (!target) return null
+  const { resolved, hash, file } = target
   if (fsSync.existsSync(file)) return `/api/icon?hash=${hash}`
   if (iconJobs.has(hash)) return iconJobs.get(hash)
 

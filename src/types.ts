@@ -8,6 +8,8 @@ export interface Item {
   nameEn?: string
   value: string
   iconPath: string | null
+  /** 派生，不落盘：服务端已渲染好的图标 png（保存那一刻算的）。null＝还没渲染，前端自己走 `/api/enrich`。 */
+  iconUrl?: string | null
   group: string
   tags: string[]
   pinned: boolean

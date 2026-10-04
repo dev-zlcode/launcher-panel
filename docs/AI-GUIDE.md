@@ -60,6 +60,7 @@
 | `nameEn` | string? | 你 | 中文名旁边的英文名，只为搜索。和 `name` 相同则不存 |
 | `value` | string | 你 | 必填。`app`/`folder`/`file` 会被 `path.resolve` 成绝对路径，其余原样存 |
 | `iconPath` | string\|null | 服务端 | 派生：有本地路径的三类＝`value`，其余＝`null`。**不要发这个字段** |
+| `iconUrl` | string\|null | 服务端 | 派生，只在响应里：图标 png 已渲染好才有值（见 §3.9）。**不落盘、不要发** |
 | `group` | string | 你 | 默认 `默认`。**传空串＝落回 `默认`，不是"保持原值"** |
 | `tags` | string[] | 你 | 去重后**最多 24 个**。传 `[]` 是真的清空。条目自己只是一串自由文本；侧栏那一列另有清单，见 §3.10 |
 | `pinned` | boolean | 你 | 只有真布尔值会覆盖，其他值＝保持原值 |
@@ -228,7 +229,8 @@ curl -s $BASE/api/library | jq '{ungroupedName, autoGroupNames, groups:[.groups[
 
 - `GET /api/apps` → `{apps:[{name,value,displayName?}]}`：`discoverDirs` 下的扫描结果（缓存 30s），是**所有应用选择器的唯一来源**。
 - `POST /api/pick` `{kind:'folder'｜'file'}` → 弹 macOS 原生选择器，**会阻塞到人选完或 120s 超时**；返回 `{cancelled, value, kind, name}`。`kind:'app'` 不支持（400 `kind 需为 folder/file`）——原生应用选择器要先过 Apple Events 授权且授权后仍会报错，应用一律从 `/api/apps` 里搜。
-- `GET /api/enrich?path=<绝对路径>` → `{iconUrl}`：确保图标已渲染。`GET /api/icon?hash=<64 位十六进制>` 取那张 png（不是这个形状 400 `bad hash`，没这个文件 404 `no icon`）。图标只在服务端算得出来（`osascript -l JavaScript` + `sips`），**不要试图自己生成**。
+- `GET /api/enrich?path=<绝对路径>` → `{iconUrl}`：**兜底用的**按需渲染。图标正常路径是在**保存条目时**就算好——`POST /api/items` 和 `PATCH /api/items/:id` 里，`iconPath` 存在就 `await ensureIcon(...)` 再返回（冷算一张实测 0.5-0.9s，路径没改过的编辑是 `existsSync` 命中、0ms），所以点保存会等这一张图。`GET /api/state`（以及 create/patch/use 的响应）给每条 item 附一个**派生** `iconUrl`——`data/icons/<sha256(绝对路径)>.png` 已在才给，**不落 `items.json`**。`GET /api/icon?hash=<64 位十六进制>` 取那张 png（不是这个形状 400 `bad hash`，没这个文件 404 `no icon`），响应带 `immutable`，所以浏览器侧也永久缓存。图标只在服务端算得出来（`osascript -l JavaScript` + `sips`），**不要试图自己生成**。
+- **卡片图标的四档回落**（`src/components/ItemCard.tsx` 的 `ItemIcon`，一档一档往下走，`<img onError>` 把失败的那档跳过）：① 条目自带的 `iconUrl`（零请求，第一帧就有图）→ ② 老条目/缓存被清时按 `iconPath` 懒 `enrich`（进视口才发，并发 4）→ ③ 链接条目的远端 favicon `https://www.google.com/s2/favicons?sz=64&domain=<host>`（**唯一一处不经服务端**，没翻墙时必不通）→ ④ 彩色首字母方块。**任何一档失败都不许留空白**，空白会被当成"图标被删了"。
 
 ### 3.10 面板两份名字清单 `PATCH /api/item-groups` → `{ itemGroups }` / `PATCH /api/item-tags` → `{ itemTags }`
 
