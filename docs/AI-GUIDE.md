@@ -6,7 +6,7 @@
 ## 0. 前置事实
 
 - 面板是**本机 Web 服务**，只绑 `127.0.0.1`，不对外网开放，**没有任何鉴权**。
-- 地址下文中记作 `BASE`：`npm run dev` 是 `http://127.0.0.1:5178`（`strictPort`，端口被占就直接失败）；`npm start` 是同一批 `/api/*`，默认也是 5178，可用 `PORT=5180` 覆盖。**动手前先确认你要连的是哪一个。**
+- 地址下文中记作 `BASE`：`npm run dev` 是 `http://127.0.0.1:5050`（`strictPort`，端口被占就直接失败）；`npm start` 是同一批 `/api/*`，默认也是 5050，可用 `PORT=5180` 覆盖。**动手前先确认你要连的是哪一个。**
 - 一切配置只有一个落点：`data/items.json`（外加 `data/icons/`、`data/runs/` 两个派生缓存目录）。`data/` 整个 git-ignore，里面是**这个人的真实路径和条目**。
 - 出厂默认（`server/api.mjs` 的 `COMMON_FOLDERS` / `COMMON_URLS` / `COMMON_APPS`）不只影响新库：`loadDb()` 启动时用 `syncSeeds()` 和 `items.json` 对账，`seed` 键存着上次同步的出厂值，据此判断某条种子被用户碰过没有。**改这三张表＝给所有已有配置下发**，规则（含"删过的不复活""没有快照的第一次不补建"）看 `syncSeeds` 的注释，别在这里复述。
 - 所有请求/响应都是 JSON。带 body 的方法要带 `-H 'content-type: application/json'`；body 不是合法 JSON 会 400 `invalid JSON body`。
@@ -15,7 +15,7 @@
 ## 1. 铁律（违反会直接坏事）
 
 1. **只用 HTTP 接口，永不手改 `data/items.json`。** 服务进程在内存里持有整表，你写到磁盘的内容会在它下一次保存时被整体覆盖掉；而且手写极易漏字段——漏掉条目的 `openWith` 会让**构建后的面板白屏**（React 直接卸载，console 不报错），这个坑踩过。
-2. **未经明确许可，不要对他的 dev server（5178）发任何写请求，也不要 kill 它。** 那上面跑的是真实配置。要试请求就在 `/tmp` 起一份沙箱（见 §6）。只读的 `GET /api/state` 可以直接打。
+2. **未经明确许可，不要对他的 dev server（5050）发任何写请求，也不要 kill 它。** 那上面跑的是真实配置。要试请求就在 `/tmp` 起一份沙箱（见 §6）。只读的 `GET /api/state` 可以直接打。
 3. **改前先读。** 每次用 `GET /api/state` 拿现状（条目 id、当前 `settings`、`appsExist`），不要凭上文记忆或猜测拼 payload。
 4. **`POST /api/items` 时不要自己塞 `openWith`**：新建的条目会**自动**按该类型的清单种一份模板。要改候选，事后走 `PATCH /api/items/:id`。
 5. **两类 PATCH 语义相反**，别混：`PATCH /api/settings` 和 `PATCH /api/items/:id` 是**按字段合并**（只传 `view.panel.layout` 不会碰到 `group`，也不会碰到 `manage`；条目只传 `{group}` 不动其它字段）；`PATCH /api/library`、`PATCH /api/item-groups` 和 `PATCH /api/item-tags` 是**整表替换**（你没列出的应用/组名/标签名等于被拿掉，所以写前必须先读全量）。
@@ -328,7 +328,7 @@ BASE=http://127.0.0.1:5399
 
 | 现象 | 真正原因 |
 | --- | --- |
-| 连不上 / `Connection refused` | 服务没起，或端口不是 5178（`PORT` 会改）。**不要靠 `kill`/重启来"修"** |
+| 连不上 / `Connection refused` | 服务没起，或端口不是 5050（`PORT` 会改）。**不要靠 `kill`/重启来"修"** |
 | 404 `no route GET /api/xxx` | 路径或方法写错（路由表在 `server/api.mjs` 末尾） |
 | 400 `value is required` | `value` 漏了或空串 |
 | 409 `该项已存在` | 同 `kind` + 同解析后 `value` 已有条目。**该 PATCH 而不是再 POST** |

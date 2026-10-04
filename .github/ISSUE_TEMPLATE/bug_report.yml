@@ -62,7 +62,7 @@ body:
       description: 实际打出去的那个 HTTP 请求（方法、路径、请求体），或点按钮时的操作序列
       render: shell
       placeholder: |
-        curl -s -X PATCH http://127.0.0.1:5178/api/settings \
+        curl -s -X PATCH http://127.0.0.1:5050/api/settings \
           -H 'content-type: application/json' \
           -d '{"openByKind":{"folder":["/Applications/Finder.app"]}}'
     validations:

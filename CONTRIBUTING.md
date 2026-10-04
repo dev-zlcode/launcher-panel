@@ -8,7 +8,7 @@
 
 ```bash
 npm install
-npm run dev        # http://127.0.0.1:5178（strictPort，只绑 127.0.0.1）
+npm run dev        # http://127.0.0.1:5050（strictPort，只绑 127.0.0.1）
 ```
 
 只能 macOS（`open` / `osascript` / `sips` / `plutil` / `pbcopy` / `mdls`），Node ≥ 20.19（Vite 7 的下限）。
@@ -24,7 +24,7 @@ npm run build      # 前两条的超集 + vite build → dist/
 npm start          # 想验生产构建再跑；PORT 可覆盖端口
 ```
 
-**不要拿我的 dev server 做实验。** `:5178` 上跑的是真实配置，服务进程在内存里持有整表，
+**不要拿我的 dev server 做实验。** `:5050` 上跑的是真实配置，服务进程在内存里持有整表，
 外部写 `data/items.json` 会被覆盖掉。要验证就在 `/tmp` 起一份沙箱副本（配方在 `docs/AI-GUIDE.md` §6）。
 
 ## 先读这两份，别读三份

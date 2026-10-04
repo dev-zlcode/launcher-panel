@@ -21,12 +21,12 @@
 
 ```bash
 npm install
-npm run dev      # http://127.0.0.1:5178
+npm run dev      # http://127.0.0.1:5050
 ```
 
 需要 Node ≥ 20.19（Vite 7 的下限），只能在 macOS 跑：打开走 `open`，`.app` 图标由 `osascript -l JavaScript`（NSWorkspace）导出再 `sips` 缩放，原生路径选择器是 `osascript`，剪贴板是 `pbcopy`，bundle id 读 `plutil`。
 
-端口固定 5178（`strictPort`），只绑 `127.0.0.1`，不对外网开放。
+端口固定 5050（`strictPort`），只绑 `127.0.0.1`，不对外网开放。
 
 ```bash
 npm run typecheck   # tsc --noEmit
@@ -188,8 +188,8 @@ PORT=5180 npm start # prod 服务端口可用 PORT 覆盖
 试一把：
 
 ```bash
-curl -s http://127.0.0.1:5178/api/state | jq '.settings.view'
-curl -s -X PATCH http://127.0.0.1:5178/api/settings \
+curl -s http://127.0.0.1:5050/api/state | jq '.settings.view'
+curl -s -X PATCH http://127.0.0.1:5050/api/settings \
   -H 'content-type: application/json' \
   -d '{"view":{"panel":{"layout":"list"}}}' | jq '.settings.view'
 ```

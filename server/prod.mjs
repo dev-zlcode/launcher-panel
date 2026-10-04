@@ -6,7 +6,7 @@ import { handleApi, withThemeBootstrap } from './api.mjs'
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)))
 const DIST = path.join(ROOT, 'dist')
-const PORT = Number(process.env.PORT ?? 5178)
+const PORT = Number(process.env.PORT ?? 5050)
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',

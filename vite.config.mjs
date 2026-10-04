@@ -24,7 +24,7 @@ export default defineConfig(({ command }) => ({
       transformIndexHtml: (html) => (command === 'serve' ? withThemeBootstrap(html) : html),
     },
   ],
-  server: { host: '127.0.0.1', port: 5178, strictPort: true },
+  server: { host: '127.0.0.1', port: 5050, strictPort: true },
   build: {
     outDir: 'dist',
     rollupOptions: {

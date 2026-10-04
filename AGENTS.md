@@ -5,8 +5,8 @@
 
 ## 红线
 
-1. **不手改 `data/items.json`。** 改配置只走 `http://127.0.0.1:5178`（或你起的那份）的 HTTP 接口。服务进程在内存里持有整表，外部写入会被覆盖；漏字段（尤其条目的 `openWith`）会让构建后的面板白屏。
-2. **未经许可不写、不 kill 他的 dev server。** `:5178` 上跑的是真实配置。要验证就在 `/tmp` 起沙箱副本（`docs/AI-GUIDE.md` §6 有配方）。只读的 `GET /api/state` 可以直接打。
+1. **不手改 `data/items.json`。** 改配置只走 `http://127.0.0.1:5050`（或你起的那份）的 HTTP 接口。服务进程在内存里持有整表，外部写入会被覆盖；漏字段（尤其条目的 `openWith`）会让构建后的面板白屏。
+2. **未经许可不写、不 kill 他的 dev server。** `:5050` 上跑的是真实配置。要验证就在 `/tmp` 起沙箱副本（`docs/AI-GUIDE.md` §6 有配方）。只读的 `GET /api/state` 可以直接打。
 3. **`data/` 永不进版本库、内容不贴进对话。** 里面是个人路径和条目；示例一律用假路径。
 4. **「移除」不碰磁盘**：删条目、清理失效引用都只改配置。**绝不 `rm` 用户文件去"清理"**。
 5. **不"顺手改进"**：不加接口/字段/缓存/鉴权/迁移脚本，不改字段名和文案。口径是能少一处就少一处——配置都进 `items.json`，不用 localStorage，不为小配置开新接口。
@@ -21,7 +21,7 @@
 ## 常用命令
 
 ```bash
-npm run dev        # http://127.0.0.1:5178（strictPort；改 server/api.mjs 会热重启并清空扫描缓存）
+npm run dev        # http://127.0.0.1:5050（strictPort；改 server/api.mjs 会热重启并清空扫描缓存）
 npm run typecheck  # tsc --noEmit
 npm run build      # typecheck + vite build → dist/
 npm test           # node --test server/api.test.mjs（纯函数单测，不起服务）
